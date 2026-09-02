@@ -1,0 +1,34 @@
+# Downloaded offline models (fetched into a per-user dir by
+# scripts/download_models.sh; this only matters if you keep a local copy)
+models/
+
+# Vendored native engine binaries are gitignored per-directory:
+#   VoiceAssistant/third_party/vosk/.gitignore   (libvosk.so)
+#   VoiceAssistant/third_party/piper/.gitignore  (standalone piper binary + libs + data)
+
+# Generated at build time from Config.h.template:
+/VoiceAssistant/Config.h
+
+# Vrui build artifacts:
+/o/
+/d/
+/bin/
+/lib/
+
+# Scratch file used while setting up this scaffold; not meant to be committed.
+.checksums.tmp
+
+# The recoding guide: style rules, dependency notes, the file-by-file checklist,
+# the build-order plan, the beginner glossary, and the runnable style-example
+# demo. All teaching material for ME, not part of the assistant -- kept out of
+# the tracked repo on purpose so the project history is just the real thing.
+/guide/
+
+# Personal editor/formatter tooling -- how I edit, not part of the assistant.
+# Same reasoning as /guide/ above: keep the tracked history to just the code.
+/.editorconfig
+/.clang-format
+/.clang-format.bak
+/.vscode/
+/.vs/
+*.code-workspace

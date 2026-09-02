@@ -1,0 +1,21 @@
+# Normalize line endings: store as LF in git, check out as LF in the working tree.
+# This repo is developed/run on Linux (and in WSL), where CRLF breaks bash scripts.
+* text=auto eol=lf
+
+# Scripts and source must always be LF.
+*.sh   text eol=lf
+*.py   text eol=lf
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.icpp text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+
+# Treat model/binary assets as binary (never touch their bytes).
+*.onnx binary
+*.so   binary
+*.zip  binary
+*.tar  binary
+*.wav  binary
