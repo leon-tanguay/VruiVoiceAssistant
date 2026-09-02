@@ -9,10 +9,6 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <GL/GLGeometryWrappers.h>
 #include <GL/GLMaterialTemplates.h>
 
-#include <Geometry/Rotation.h>
-#include <Geometry/Point.h>
-#include <Geometry/Rotation.h>
-
 #include <Vrui/Vrui.h>
 #include <Vrui/Viewer.h>
 #include <Vrui/VisletManager.h>
@@ -58,9 +54,9 @@ void VoiceAssistant::enable(bool startup)
 	Vector viewDir = getMainViewer()->getViewDirection();
 	Vector up = getUpDirection();
 
-	Scalar armLength = 0.5; // distance from head to orb along view direction
-	Scalar rightOffset = 0.2; // offset to the right of the view direction
-	Scalar heightOffset = 0.1; // offset above the head position
+	Scalar armLength = Scalar(28)*getInchFactor();   // ~arm's length
+	Scalar rightOffset = Scalar(5)*getInchFactor();
+	Scalar heightOffset = Scalar(3)*getInchFactor();
 
 	Vector right = viewDir ^ up;
 	orbPosition = headPos + viewDir*armLength + right*rightOffset + up*heightOffset;
@@ -75,7 +71,7 @@ void VoiceAssistant::display(GLContextData& contextData) const
 
 	glMaterialAmbientAndDiffuse(GLMaterialEnums::FRONT,GLColor<GLfloat,4>(1.0f,0.85f,0.0f)); // yellow ball
 
-	GLfloat orbRadius=0.06f;    // 6cm radius -> 12cm (~4.7in) across, a bit bigger than a softball
+	GLfloat orbRadius=2.2f*GLfloat(getInchFactor()); // ~4.4in across, a bit bigger than a softball
 	GLsizei orbNumStrips=12;
 	glDrawSphereIcosahedron(orbRadius,orbNumStrips);
 
@@ -97,6 +93,17 @@ void VoiceAssistant::frame(void)
 Methods of class VoiceAssistantFactory:
 *************************************/
 
+VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager)
+	:VisletFactory("VoiceAssistant",visletManager)
+	{
+	VoiceAssistant::factory=this;
+	}
+
+VoiceAssistantFactory::~VoiceAssistantFactory(void)
+	{
+	VoiceAssistant::factory=0;
+	}
+
 Vislet* VoiceAssistantFactory::createVislet(int numArguments,const char* const arguments[]) const
 	{
 	return new VoiceAssistant(numArguments,arguments);
@@ -105,12 +112,6 @@ Vislet* VoiceAssistantFactory::createVislet(int numArguments,const char* const a
 void VoiceAssistantFactory::destroyVislet(Vislet* vislet) const
 	{
 	delete vislet;
-	}
-
-VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager)
-	:VisletFactory("VoiceAssistant",visletManager)
-	{
-	VoiceAssistant::factory=this;
 	}
 
 /*************************************

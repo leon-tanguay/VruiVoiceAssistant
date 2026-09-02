@@ -176,6 +176,8 @@ practice with a new Vrui class, not required for correctness.
 
 #include <Vrui/Vislet.h>
 #include <Vrui/Types.h>
+#include <Geometry/Point.h>
+#include <Geometry/Rotation.h>
 
 class GLContextData;
 
