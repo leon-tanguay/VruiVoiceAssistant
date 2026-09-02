@@ -53,10 +53,20 @@ Piece by piece:
   X axis and "up" as the local Y axis. This is the toolkit's ready-made answer
   to "build a rotation that faces this direction with this up vector" --
   don't hand-derive a rotation matrix.
-  - the assistant needs it in the OTHER order from TurnSignal, since the
-    orb's flat face should point BACK toward the user, not away like an arrow
-    lying flat on the ground in front of them -- work out the sign/axis
-    convention deliberately rather than copying the call unchanged.
+  - CORRECTED (an earlier draft of this note guessed wrong): SAME order as
+    TurnSignal, not the other way around. Worked out by hand from
+    fromBaseVectors(viewDir^up,up) with viewDir=(0,0,-1),up=(0,1,0): local X
+    (xAxis) comes out (1,0,0), and local Z -- implied by the right-handed
+    basis, xAxis-cross-yAxis -- comes out (0,0,1), which is BEHIND the
+    viewer's view direction, i.e. back toward the viewer. TurnSignal's flat
+    arrow is drawn in the local XY plane (plain 2-argument glVertex(x,y) calls,
+    z implicitly 0), so its face normal already points at the viewer with this
+    exact call, unchanged. It only reads as "facing away" if you assume the
+    arrow lies flat on the ground -- it doesn't; it's translated up and
+    forward (0,arrowHeight,-arrowDist), a vertical card in front of you, not
+    a ground decal. Practical result: local +X is screen-right and local +Y
+    is screen-up from the viewer's standpoint, same as drawing on ordinary 2D
+    graph paper -- no mirroring to work out, no flip needed.
 - `arrowSize`/`arrowDist`/`arrowHeight` are real physical-unit constants
   (TurnSignal.h line 46-48, defaulted via `Vrui::getInchFactor()` --
   <Vrui/Vrui.h>, "length of an inch in Vrui physical units" -- and loaded
@@ -164,19 +174,39 @@ practice with a new Vrui class, not required for correctness.
 #ifndef VRUI_VISLETS_VOICEASSISTANT_INCLUDED
 #define VRUI_VISLETS_VOICEASSISTANT_INCLUDED
 
+#include <Vrui/Vislet.h>
+#include <Vrui/Types.h>
+
+class GLContextData;
+
 namespace Vrui {
 
 namespace Vislets {
 
-class VoiceAssistant;
+class VoiceAssistantFactory;
+
+class VoiceAssistant:public Vislet
+	{
+	friend class VoiceAssistantFactory;
+
+	private:
+	static VoiceAssistantFactory* factory; // Pointer to the singleton instance of this factory
+	Point orbPosition; // Physical-space location the orb spawned at
+	Rotation orbOrientation; // Physical-space orientation the orb spawned at
+
+	public:
+	VoiceAssistant(int numArguments,const char* const arguments[]); // Initializes the voice assistant vislet with the given command-line arguments
+	virtual ~VoiceAssistant(void);
+	virtual VisletFactory* getFactory(void) const;
+	virtual void enable(bool startup);
+	virtual void disable(bool shutdown);
+	virtual void frame(void);
+	virtual void display(GLContextData& contextData) const;
+	};
 
 class VoiceAssistantFactory:public VisletFactory
 	{
 	friend class VoiceAssistant;
-
-	/* Elements: */
-  	private:
-  	VoiceAsst::VoiceSettings settings; // Class-level defaults, overridable per instance via arguments
 
   	/* Constructors and destructors: */
   	public:
