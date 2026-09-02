@@ -1,0 +1,29 @@
+{
+  "_comment": "Voice-assistant vocabulary. 'commands' are Vrui pipe-command tokens the assistant may issue (id | arguments | description). 'tools' and 'devices' give the LLM canonical names + spoken aliases to ground arguments on; the running app's live tool/device names are merged in at startup. Ported from the former entities.yaml + commands/*.yaml.",
+
+  "commands": [
+    { "id": "resetView", "name": "reset view", "arguments": "", "description": "Reset the navigation view to the default position and orientation." },
+    { "id": "saveScreenshot", "name": "save screenshot", "arguments": "[filename] [window]", "description": "Save a screenshot of the current view to an image file." },
+    { "id": "showMessage", "name": "show message", "arguments": "<message text>", "description": "Show a text message to the user." },
+    { "id": "saveView", "name": "save view", "arguments": "<filename>", "description": "Save the current viewpoint to a file." },
+    { "id": "loadView", "name": "load view", "arguments": "<filename>", "description": "Load a viewpoint from a file." },
+    { "id": "quit", "name": "quit", "arguments": "", "description": "Quit the Vrui application." },
+    { "id": "bindTool", "name": "switch tool", "arguments": "<tool> <device>", "description": "Bind or switch the interaction tool on an input device, e.g. put a tool in a hand or change which tool a controller holds. (Not a built-in Vrui command yet; resolves but does not execute.)" }
+  ],
+
+  "tools": [
+    { "name": "Jedi Tool", "aliases": ["saber", "lightsaber", "light saber", "jedi", "sword", "laser sword", "glow stick"], "description": "A glowing lightsaber blade for pointing out features in 3D." },
+    { "name": "Laserpointer Tool", "aliases": ["laser pointer", "pointer", "laser"], "description": "A laser-pointer ray for indicating features." },
+    { "name": "Flashlight Tool", "aliases": ["flashlight", "torch", "light"], "description": "A virtual flashlight that lights up the scene." },
+    { "name": "Measurement Tool", "aliases": ["measure", "measuring tool", "ruler", "tape measure"], "description": "Measures distances and positions in the environment." },
+    { "name": "Clip Plane Tool", "aliases": ["clip plane", "clipping plane", "cutaway", "cross section"], "description": "Adds a clipping plane to cut away part of the scene." },
+    { "name": "Sketching Tool", "aliases": ["sketch", "draw", "pen", "marker"], "description": "Draw free-hand annotations in 3D space." },
+    { "name": "Six-Dof Dragging Tool", "aliases": ["dragger", "grab tool", "move tool", "six dof dragging"], "description": "Grab and move objects with six degrees of freedom." }
+  ],
+
+  "devices": [
+    { "name": "Left Controller", "aliases": ["left hand", "left controller", "left", "off hand", "left wand"] },
+    { "name": "Right Controller", "aliases": ["right hand", "right controller", "right", "main hand", "dominant hand", "right wand"] },
+    { "name": "Mouse", "aliases": ["mouse", "cursor", "desktop"] }
+  ]
+}

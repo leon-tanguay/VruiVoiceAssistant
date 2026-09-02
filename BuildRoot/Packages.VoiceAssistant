@@ -1,0 +1,13 @@
+########################################################################
+# Packages.VoiceAssistant - Package definition for the Vrui Voice
+# Assistant, included by this project's makefile.
+#
+# The Voice Assistant ships only two run-time-loaded plug-ins (a vislet
+# and two tools) and installs NO public library or headers, so there is
+# nothing for other projects to link against -- this file is intentionally
+# a stub. It exists to mirror the layout of other Vrui add-ons (e.g.
+# Kinect's Packages.Kinect) and to give a place to declare a linkable
+# MYVOICEASSISTANT package should the assistant ever expose a library.
+########################################################################
+
+# (No package definitions yet -- nothing links against the Voice Assistant.)

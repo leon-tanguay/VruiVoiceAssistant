@@ -1,0 +1,45 @@
+/***********************************************************************
+Config - Build-time configuration for the Vrui Voice Assistant.
+
+This file is a TEMPLATE. The build system copies it to Config.h and bakes
+in the install-time asset directory via $(call CONFIG_SETSTRINGVAR,...),
+plus a feature probe via a plain sed replacement. Do not edit Config.h
+directly -- edit Config.h.template and re-run `make`.
+
+VOICEASSISTANT_CONFIG_SHAREDIR is the directory where `make install` puts
+this package's runtime assets (catalog, earcon WAVs, the vendored piper
+binary). It defaults to the installed location
+   $(VRUI_SHAREINSTALLDIR)/VoiceAssistant-<version>
+The other paths are derived from it. The large STT/TTS *models* are NOT
+here: they live in a per-user directory resolved at runtime (see
+VoiceSettings.h), so downloading them needs no root access.
+
+VOICEASSISTANT_CONFIG_HAVE_GETCOMMANDMAP records whether THIS installed
+Vrui's Misc::CommandDispatcher exposes getCommandMap() (see the makefile's
+HAVE_GETCOMMANDMAP probe, and DEPENDENCIES.md #1-2 for why this can't be
+assumed: this machine has both a Vrui-15.0, where it exists, and a
+Vrui-14.1, where it does not, installed side by side). Code that calls it
+must be guarded:
+
+    #if VOICEASSISTANT_CONFIG_HAVE_GETCOMMANDMAP
+    ... use getCommandMap() to enumerate live commands ...
+    #endif
+***********************************************************************/
+
+#ifndef VOICEASSISTANT_CONFIG_INCLUDED
+#define VOICEASSISTANT_CONFIG_INCLUDED
+
+/* Root directory of this package's installed runtime assets (set at build time).
+   Used as the default baseDir in VoiceSettings, against which the (relative)
+   catalog, sounds, and piper paths are resolved -- so overriding the vislet's
+   -dir relocates all of them together. */
+#define VOICEASSISTANT_CONFIG_SHAREDIR "."
+
+/* Installed directory holding the earcon WAVs. Baked absolutely (the earcon
+   loader uses it directly), so spoken earcons always come from the install. */
+#define VOICEASSISTANT_CONFIG_SOUNDDIR VOICEASSISTANT_CONFIG_SHAREDIR "/sounds"
+
+/* Set to 1 or 0 by the makefile depending on the installed Vrui's headers. */
+#define VOICEASSISTANT_CONFIG_HAVE_GETCOMMANDMAP 0
+
+#endif

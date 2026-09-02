@@ -1,0 +1,6 @@
+# Vendored standalone Piper: the native binary plus its bundled shared libraries
+# (onnxruntime, espeak-ng, piper_phonemize) and espeak-ng phoneme data total ~33 MB.
+# Not committed; obtain with ./fetch-piper.sh
+*
+!.gitignore
+!fetch-piper.sh
