@@ -84,6 +84,23 @@ orbs' corner-like arrangement should be two separate head-relative points or
 one anchor point with a local offset) -- TurnSignal answers "how do I place
 one flat thing relative to the head," not "how do I place two."
 
+CORNER-HUD VARIANT (current direction, per direct instruction): same recipe
+as above, unchanged -- head-locked, recomputed every frame, physical-space,
+no glOrtho -- just pushed toward the corner of view instead of dead-center.
+Concretely: after the same glTranslate(headPos)/glRotate(fromBaseVectors(
+right,up)), use a LARGER rightOffset and upOffset (both positive: local +X is
+screen-right, local +Y is screen-up, per the derivation above) relative to
+forwardDist, e.g. glTranslate(rightOffset,upOffset,-forwardDist), so the shape
+sits toward the top-right of the field of view rather than centered in front
+of the face like TurnSignal's arrow. Also make it visually flat/2D-styled
+(unlit glColor + glBegin/glVertex in the local XY plane, z implicit 0 -- same
+technique as TurnSignal's arrow) instead of the lit glDrawSphereIcosahedron
+ball -- a HUD icon reads better flat and unlit than as a shaded 3D sphere.
+Since this must track the CURRENT head pose every frame (that's what makes it
+read as "pinned to the corner of my view" as you look around), the position/
+orientation can no longer be computed once in enable() and held fixed --
+recompute every frame, same as TurnSignal does directly inside display().
+
 VISUAL STYLE: design the orb after Destiny's Ghost -- see
 ../guide/BUILD_ORDER.md Milestone 1 for the full direction (angular shell
 plates instead of a plain ring, a single glowing "eye" carrying most of the
@@ -191,19 +208,32 @@ class VoiceAssistant:public Vislet
 	{
 	friend class VoiceAssistantFactory;
 
-	private:
-	static VoiceAssistantFactory* factory; // Pointer to the singleton instance of this factory
-	Point orbPosition; // Physical-space location the orb spawned at
-	Rotation orbOrientation; // Physical-space orientation the orb spawned at
-
+	/* Embedded classes: */
 	public:
-	VoiceAssistant(int numArguments,const char* const arguments[]); // Initializes the voice assistant vislet with the given command-line arguments
+	enum OrbState { Warming, Idle, Listening, Thinking, Speaking, Error };
+
+	/* Elements: */
+	private:
+	static VoiceAssistantFactory* factory;
+	Point orbPosition;
+	Rotation orbOrientation;
+	OrbState state;
+	double stateStartTime;
+
+	/* Constructors and destructors: */
+	public:
+	VoiceAssistant(int numArguments,const char* const arguments[]);
 	virtual ~VoiceAssistant(void);
+
+	/* Methods from Vislet: */
 	virtual VisletFactory* getFactory(void) const;
 	virtual void enable(bool startup);
 	virtual void disable(bool shutdown);
 	virtual void frame(void);
 	virtual void display(GLContextData& contextData) const;
+
+	/* Methods: */
+	void applyState(OrbState newState);
 	};
 
 class VoiceAssistantFactory:public VisletFactory
@@ -219,6 +249,7 @@ class VoiceAssistantFactory:public VisletFactory
   	virtual Vislet* createVislet(int numArguments,const char* const arguments[]) const;
   	virtual void destroyVislet(Vislet* vislet) const;
   	};
+
 }
 
 }

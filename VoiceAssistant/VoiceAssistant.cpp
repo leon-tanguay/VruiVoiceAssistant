@@ -5,26 +5,18 @@ VoiceAssistant - See VoiceAssistant.h.
 #include "VoiceAssistant.h"
 
 #include <GL/gl.h>
-#include <GL/GLModels.h>
 #include <GL/GLGeometryWrappers.h>
-#include <GL/GLMaterialTemplates.h>
+#include <GL/GLColorTemplates.h>
+
+#include <Math/Math.h>
+
+#include <Misc/MessageLogger.h>
 
 #include <Vrui/Vrui.h>
 #include <Vrui/Viewer.h>
 #include <Vrui/VisletManager.h>
 
-#include <Misc/MessageLogger.h>
-// TODO: for display(), #include <Vrui/Vrui.h> (for getMainViewer(),
-// goToPhysicalSpace()) and read the "DRAWING THE ORB -- CORRECTED" reference
-// block at the top of VoiceAssistant.h before writing it. Short version: this
-// is NOT a 2D/glOrtho overlay (that was an earlier, wrong draft of this
-// comment) -- draw the orb as a real flat 3D object positioned in physical
-// space relative to Vrui::getMainViewer()->getHeadPosition(), via
-// Vrui::goToPhysicalSpace(contextData).
-
 namespace Vrui {
-
-
 
 namespace Vislets {
 
@@ -49,32 +41,30 @@ void VoiceAssistant::enable(bool startup)
 	{
 	Vislet::enable(startup);
 	Misc::consoleNote("VoiceAssistant: starting");
-
-	Point headPos = getMainViewer()->getHeadPosition();
-	Vector viewDir = getMainViewer()->getViewDirection();
-	Vector up = getUpDirection();
-
-	Scalar armLength = Scalar(28)*getInchFactor();   // ~arm's length
-	Scalar rightOffset = Scalar(5)*getInchFactor();
-	Scalar heightOffset = Scalar(3)*getInchFactor();
-
-	Vector right = viewDir ^ up;
-	orbPosition = headPos + viewDir*armLength + right*rightOffset + up*heightOffset;
-	orbOrientation = Rotation::fromBaseVectors(right,up);
 	}
 
 void VoiceAssistant::display(GLContextData& contextData) const
 	{
+	GLfloat orbRadius = .02f*GLfloat(getInchFactor());
+	const int numSides = 60;
+
 	glPushMatrix();
 	glTranslate(orbPosition-Point::origin);
 	glRotate(orbOrientation);
+	
+	glPushAttrib(GL_ENABLE_BIT);
+	glDisable(GL_LIGHTING);
 
-	glMaterialAmbientAndDiffuse(GLMaterialEnums::FRONT,GLColor<GLfloat,4>(1.0f,0.85f,0.0f)); // yellow ball
-
-	GLfloat orbRadius=2.2f*GLfloat(getInchFactor()); // ~4.4in across, a bit bigger than a softball
-	GLsizei orbNumStrips=12;
-	glDrawSphereIcosahedron(orbRadius,orbNumStrips);
-
+	glColor(GLColor<GLfloat,4>(1.0f,0.85f,0.0f)); // yellow, once for the whole fan
+	glBegin(GL_TRIANGLE_FAN);
+	glVertex(0.0f,0.0f); // center
+	for(int i=0;i<=numSides;++i)
+		{
+		GLfloat angle = 2.0f*Math::Constants<GLfloat>::pi*GLfloat(i)/GLfloat(numSides);
+		glVertex(orbRadius*Math::cos(angle),orbRadius*Math::sin(angle));
+		}
+	glEnd();
+	glPopAttrib();
 	glPopMatrix();
 	}
 
@@ -86,7 +76,54 @@ void VoiceAssistant::disable(bool shutdown)
 	
 void VoiceAssistant::frame(void)
 	{
+	// Update the assistant's position and orientation based on main viewer's position
+	Point headPos = getMainViewer()->getHeadPosition();
+	Vector viewDir = getMainViewer()->getViewDirection();
+	Vector up = getUpDirection();
+	Vector right = viewDir ^ up; // cross product to get right vector
+
+	Scalar forwardDist = Scalar(1.5)*getInchFactor();  // how far in front
+	Scalar rightOffset = Scalar(.25)*getInchFactor();   // pushed toward the right edge
+	Scalar upOffset    = Scalar(.25)*getInchFactor();   // pushed toward the top edge
+
+	orbPosition = headPos + viewDir*forwardDist + right*rightOffset + up*upOffset;
+	orbOrientation = Rotation::fromBaseVectors(right,up);
+
 	Vislet::frame();
+	}
+
+// Local function to this cpp file for debugging or informational purposes: 
+// returns a string representation of the OrbState enum
+const char* getStateName(VoiceAssistant::OrbState state)
+	{
+	switch(state)
+		{
+		case VoiceAssistant::Warming:
+			return "Warming";
+		case VoiceAssistant::Idle:
+			return "Idle";
+		case VoiceAssistant::Listening:
+			return "Listening";
+		case VoiceAssistant::Thinking:
+			return "Thinking";
+		case VoiceAssistant::Speaking:
+			return "Speaking";
+		case VoiceAssistant::Error:
+			return "Error";
+		}
+	return "Unknown";
+	}
+
+void VoiceAssistant::applyState(OrbState newState)
+	{
+	if(this->state != newState)
+		{
+		state = newState;
+		stateStartTime = getApplicationTime();
+
+		// Use Vrui message logger to log state change without need for std::string
+		Misc::formattedConsoleNote("VoiceAssistant: state changed to %s",getStateName(state));
+		}
 	}
 
 /*************************************
