@@ -198,9 +198,11 @@ practice with a new Vrui class, not required for correctness.
 
 class GLContextData;
 
-namespace Vrui {
+namespace Vrui 
+{
 
-namespace Vislets {
+namespace Vislets 
+{
 
 class VoiceAssistantFactory;
 
@@ -215,14 +217,19 @@ class VoiceAssistant:public Vislet
 	/* Elements: */
 	private:
 	static VoiceAssistantFactory* factory;
+	static VoiceAssistant* activeInstance;
 	Point orbPosition;
 	Rotation orbOrientation;
 	OrbState state;
 	double stateStartTime;
+	bool userIsSpeaking;
+	double userFinishedSpeakingTime;
 
 	/* Private methods: */
 	static void testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
-
+	static void voiceAssistantPressCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
+	static void voiceAssistantReleaseCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
+	
 	/* Constructors and destructors: */
 	public:
 	VoiceAssistant(int numArguments,const char* const arguments[]);
@@ -236,6 +243,7 @@ class VoiceAssistant:public Vislet
 	virtual void display(GLContextData& contextData) const;
 
 	/* Methods: */
+	static VoiceAssistant* getActiveInstance(void);
 	void applyState(OrbState newState);
 	};
 

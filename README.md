@@ -9,6 +9,17 @@ assistant at [`../vrui-assistant`](../vrui-assistant); every file under
 `VoiceAssistant/` starts as a blank stub and is being filled in by hand, one piece at a
 time. Until that's further along, `../vrui-assistant` is the one that actually runs.
 
+## Loading a tool plug-in (no Vrui.cfg edit needed)
+
+Vislets load via `-vislet <ClassName> ';'`. A Tool plug-in (e.g. `VoiceAssistantTool`,
+the push-to-talk button) instead needs `-addToolClass <ClassName>` to show up in
+Vrui's tool-selection menu at runtime -- press any unbound button/key and pick it from
+that popup to bind it yourself, no editing `/usr/local/etc/Vrui-15.0/Vrui.cfg` required:
+
+```bash
+VruiDemoSmall -vislet VoiceAssistant ';' -addToolClass VoiceAssistantTool
+```
+
 ## Build
 
 ```bash
@@ -28,7 +39,7 @@ Then run any Vrui application with the vislet:
 
 ```bash
 ollama serve &
-VruiDemo -vislet VoiceAssistant ';'
+VruiDemoSmall -vislet VoiceAssistant ';'
 ```
 
 ## Layout

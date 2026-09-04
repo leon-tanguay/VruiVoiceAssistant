@@ -1,33 +1,51 @@
-/***********************************************************************
-VoiceAssistantTool - TODO: write the banner comment (see ../guide/STYLE_GUIDE.md
-section 2, and ../guide/RECODE_CHECKLIST.md item 12 -- this file and
-VoiceAssistantNumberTool.h/.cpp differ from each other in exactly four
-lines in v1; item 12 has the options for what to do about that).
+#ifndef VRUI_VOICEASSISTANTTOOL_INCLUDED
+#define VRUI_VOICEASSISTANTTOOL_INCLUDED
 
-Issuing the command -- v1's issueCommand() (VoiceAssistantTool.cpp) opens a
-THROWAWAY pipe() for every single button press, writes the command string
-into it, calls getCommandDispatcher().dispatchCommands(p[0]), then closes
-both ends -- just to hand one known string to the SAME dispatcher call on
-the SAME thread (a Vrui tool's buttonCallback() already runs on the main
-thread; there is no cross-thread hand-off happening here at all, unlike
-the vislet's worker-thread case in VoiceAssistant.h). That whole
-pipe/write/dispatchCommands/close dance -- including the comment about
-"the explicit branch that silences glibc's warn_unused_result on
-write()" -- collapses to one line with <Misc/CommandDispatcher.h>'s
-direct, no-fd call:
-    Vrui::getCommandDispatcher().dispatchCommand(cmd,cmd+strlen(cmd));
-See ../guide/RECODE_CHECKLIST.md item 12 and item 11's pipe note in
-VoiceAssistant.h for the fuller picture (the vislet's OWN pipe, for the
-worker-to-main case, has a different and better fix: a mutex-guarded
-queue, not a direct call, because that one really does cross threads).
-***********************************************************************/
+#include <Vrui/UtilityTool.h>
 
-#ifndef VRUI_TOOLS_VOICEASSISTANTTOOL_INCLUDED
-#define VRUI_TOOLS_VOICEASSISTANTTOOL_INCLUDED
+/********************************************
+Lightweight and simple tool added to Vrui that sends the press and release 
+commands to the voice assistant when the tool's button is pressed and released. 
+This allows the user to control the voice assistant with a single button on 
+any input device.
+********************************************/
+namespace Vrui 
+{
 
-namespace Vrui {
+class VoiceAssistantTool;
 
-// TODO: declare VoiceAssistantTool (../guide/RECODE_CHECKLIST.md item 12).
+class VoiceAssistantToolFactory:public ToolFactory
+	{
+	friend class VoiceAssistantTool;
+
+	/* Constructors and destructors: */
+	public:
+	VoiceAssistantToolFactory(ToolManager& toolManager);
+	virtual ~VoiceAssistantToolFactory(void);
+
+	/* Methods from ToolFactory: */
+	virtual const char* getName(void) const;
+	virtual const char* getButtonFunction(int buttonSlotIndex) const;
+	virtual Tool* createTool(const ToolInputAssignment& inputAssignment) const;
+	virtual void destroyTool(Tool* tool) const;
+	};
+
+class VoiceAssistantTool:public UtilityTool
+	{
+	friend class VoiceAssistantToolFactory;
+
+	/* Elements: */
+	private:
+	static VoiceAssistantToolFactory* factory;
+
+	/* Constructors and destructors: */
+	public:
+	VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment);
+
+	/* Methods from Tool: */
+	virtual const ToolFactory* getFactory(void) const;
+	virtual void buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData);
+	};
 
 }
 

@@ -29,15 +29,22 @@ Methods of class VoiceAssistant:
 VoiceAssistant::VoiceAssistant(int numArguments,const char* const arguments[])
 	:Vislet(), state(Idle), stateStartTime(0.0)
 	{
+		activeInstance=this;
 	}
 
 VoiceAssistant::~VoiceAssistant(void)
 	{
+		activeInstance=0;
 	}
 
 VisletFactory* VoiceAssistant::getFactory(void) const
 	{
 	return factory;
+	}
+
+VoiceAssistant* VoiceAssistant::getActiveInstance(void) // Returns the currently running instance, or null if none is active
+	{
+	return activeInstance;
 	}
 
 void VoiceAssistant::enable(bool startup)
@@ -47,6 +54,13 @@ void VoiceAssistant::enable(bool startup)
 
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test",&VoiceAssistant::testCommandCallback,this,
 		"<stateName>","Switches the orb to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
+
+	// 0s here serve as null pointer for userData, since the callbacks don't need it
+	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press",&VoiceAssistant::voiceAssistantPressCallback,this,0,
+		"Begin a voice assistant request (simulate pressing the button)");
+
+	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release",&VoiceAssistant::voiceAssistantReleaseCallback,this,0,
+		"Release a voice assistant request (simulate releasing the button)");
 	}
 
 void VoiceAssistant::disable(bool shutdown)
@@ -57,6 +71,26 @@ void VoiceAssistant::disable(bool shutdown)
 	
 void VoiceAssistant::frame(void)
 	{
+	double elapsed = getApplicationTime()-stateStartTime;
+	
+
+	// THESE ARE FOR TESTING PURPOSES ONLY, to demonstrate state changes without needing a voice input
+	// Each press command will cycle through these states
+
+	//Give user a bit more time to talk after lifting the button
+	const double listeningBufferDuration = .3;
+	const double thinkingDuration = 3; // seconds before Thinking auto-advances to Speaking
+	const double speakingDuration = 3; // seconds before Speaking auto-advances to Idle
+
+	// Update speaking time
+	if(state==Listening)
+		{
+			double elaspedSinceUserFinishedSpeaking = getApplicationTime()-userFinishedSpeakingTime;
+			if(elaspedSinceUserFinishedSpeaking>=listeningBufferDuration) applyState(Thinking);
+		}
+	else if(state==Thinking && elapsed>=thinkingDuration) applyState(Speaking);
+	else if(state==Speaking && elapsed>=speakingDuration) applyState(Idle);
+
 	// Update the assistant's position and orientation based on main viewer's position
 	Point headPos = getMainViewer()->getHeadPosition();
 	Vector viewDir = getMainViewer()->getViewDirection();
@@ -157,6 +191,28 @@ void VoiceAssistant::testCommandCallback(const char* argumentBegin,const char* a
 		}
 
 	thisPtr->applyState(newState);
+	}
+
+//Called by saying voiceAssistant.press
+void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
+	{
+	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
+	thisPtr->applyState(Listening);
+	thisPtr->userIsSpeaking = true;
+	}
+
+//Called by saying voiceAssistant.release
+void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
+	{
+	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
+
+	/* If it is still listening by time it is released, 
+	start timer before it actually stops listening to input */
+	if (thisPtr->state == Listening)
+		{
+			thisPtr->userIsSpeaking = false;
+			thisPtr->userFinishedSpeakingTime = getApplicationTime();
+		}
 	}
 
 /* ///////////////////////////////////////////////////
@@ -386,7 +442,7 @@ extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
 Static elements of class VoiceAssistant:
 ******************************************/
 VoiceAssistantFactory* VoiceAssistant::factory=0;
-
+VoiceAssistant* VoiceAssistant::activeInstance=0;
 }
 }
 
