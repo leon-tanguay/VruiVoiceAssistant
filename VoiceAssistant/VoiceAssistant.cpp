@@ -136,8 +136,8 @@ void VoiceAssistant::frame(void)
 		userIsSpeaking = false;
 		}
 
-	// Update speaking time
-	if(state==Listening)
+	// Update finished speaking timer if user not speaking
+	if(state==Listening && !userIsSpeaking)
 		{
 			double elaspedSinceUserFinishedSpeaking = getApplicationTime()-userFinishedSpeakingTime;
 			if(elaspedSinceUserFinishedSpeaking>=listeningBufferDuration) applyState(Thinking);
@@ -159,6 +159,10 @@ void VoiceAssistant::frame(void)
 
 	// Set element of rotation to face user
 	orbOrientation = Rotation::fromBaseVectors(right,billboardUp);
+
+	// Update drawing
+	if(state!=Idle)
+		Vrui::requestUpdate();
 	}
 
 // Local function to this cpp file for debugging or informational purposes: 
