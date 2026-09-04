@@ -85,8 +85,8 @@ void VoiceAssistant::setOrbSpawnAndSize(void)
 	right.normalize(); // ensure right vector is unit length
 
 	Scalar forwardDist = Scalar(1)*getMeterFactor();  // arms length in front ish
-	Scalar rightOffset = Scalar(.3)*getMeterFactor();   // a bit to right of center
-	Scalar upOffset    = Scalar(-.2)*getMeterFactor();   // a bit below eye level
+	Scalar rightOffset = Scalar(.1)*getMeterFactor();   // a bit to right of center
+	Scalar upOffset    = Scalar(-.001)*getMeterFactor();   // a bit below eye level
 	Scalar spawnDistance = Math::sqrt(Math::sqr(forwardDist) + Math::sqr(rightOffset) + Math::sqr(upOffset));
 
 	// Rough point before adjusted via UIManager
@@ -99,9 +99,13 @@ void VoiceAssistant::setOrbSpawnAndSize(void)
 	Vector toOrb = orbTransform.getTranslation() - (headPos - Point::origin);
 	Scalar actualDistance = toOrb.mag();
 
-	// Output orb info set
-	orbSize = sizeToDistRatio * actualDistance;
-	orbPosition = orbTransform.getOrigin();
+	// TEST
+	orbPosition = rawAnchor; // Use raw anchor for position, since UIManager's transform may include scaling
+	orbSize = baseSize; // Use base size for orb size, since we want it to be consistent regardless of distance
+	
+	// REAL SCALED CODE
+	//orbSize = sizeToDistRatio * actualDistance;
+	//orbPosition = orbTransform.getOrigin();
 
 	//Print to console for debugging purposes
 	Misc::formattedConsoleNote("VoiceAssistant: orb spawned at (%.3f,%.3f,%.3f), size %.3f",
