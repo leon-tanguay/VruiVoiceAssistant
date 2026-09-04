@@ -224,6 +224,7 @@ class VoiceAssistant:public Vislet
 	double stateStartTime;
 	bool userIsSpeaking;
 	double userFinishedSpeakingTime;
+	Scalar orbSize;
 
 	/* Private methods: */
 	static void testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
@@ -245,6 +246,7 @@ class VoiceAssistant:public Vislet
 	/* Methods: */
 	static VoiceAssistant* getActiveInstance(void);
 	void applyState(OrbState newState);
+	void setOrbSpawnAndSize(void);
 	};
 
 class VoiceAssistantFactory:public VisletFactory

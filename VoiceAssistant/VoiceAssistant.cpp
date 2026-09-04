@@ -15,6 +15,7 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <Misc/CommandDispatcher.h>
 #include <Misc/MessageLogger.h>
 
+#include <Vrui/UIManager.h>
 #include <Vrui/Vrui.h>
 #include <Vrui/Viewer.h>
 #include <Vrui/VisletManager.h>
@@ -27,7 +28,7 @@ namespace Vislets {
 Methods of class VoiceAssistant:
 *************************************/
 VoiceAssistant::VoiceAssistant(int numArguments,const char* const arguments[])
-	:Vislet(), state(Idle), stateStartTime(0.0)
+	:Vislet(), state(Idle), stateStartTime(0.0), userFinishedSpeakingTime(0.0), userIsSpeaking(false)
 	{
 		activeInstance=this;
 	}
@@ -61,6 +62,11 @@ void VoiceAssistant::enable(bool startup)
 
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release",&VoiceAssistant::voiceAssistantReleaseCallback,this,0,
 		"Release a voice assistant request (simulate releasing the button)");
+
+	//start on warmup
+	applyState(Warmup);
+
+	setOrbSpawnAndSize();
 	}
 
 void VoiceAssistant::disable(bool shutdown)
@@ -69,18 +75,62 @@ void VoiceAssistant::disable(bool shutdown)
 	Misc::consoleNote("VoiceAssistant: stopping");
 	}
 	
+void VoiceAssistant::setOrbSpawnAndSize(void)
+	{
+	// Update the assistant's position and orientation based on main viewer's position
+	Point headPos = getMainViewer()->getHeadPosition();
+	Vector viewDir = getMainViewer()->getViewDirection();
+	Vector up = getUpDirection();
+	Vector right = viewDir ^ up; // cross product to get right vector
+	right.normalize(); // ensure right vector is unit length
+
+	Scalar forwardDist = Scalar(1)*getMeterFactor();  // arms length in front ish
+	Scalar rightOffset = Scalar(.3)*getMeterFactor();   // a bit to right of center
+	Scalar upOffset    = Scalar(-.2)*getMeterFactor();   // a bit below eye level
+	Scalar spawnDistance = Math::sqrt(Math::sqr(forwardDist) + Math::sqr(rightOffset) + Math::sqr(upOffset));
+
+	// Rough point before adjusted via UIManager
+	Point rawAnchor = headPos + viewDir*forwardDist + right*rightOffset + up*upOffset;
+	ONTransform orbTransform = Vrui::getUiManager()->calcUITransform(rawAnchor);
+
+	Scalar baseSize = Scalar(.1)*getMeterFactor();   // softball ish size
+	Scalar sizeToDistRatio = baseSize / spawnDistance; 
+	
+	Vector toOrb = orbTransform.getTranslation() - (headPos - Point::origin);
+	Scalar actualDistance = toOrb.mag();
+
+	// Output orb info set
+	orbSize = sizeToDistRatio * actualDistance;
+	orbPosition = orbTransform.getOrigin();
+
+	//Print to console for debugging purposes
+	Misc::formattedConsoleNote("VoiceAssistant: orb spawned at (%.3f,%.3f,%.3f), size %.3f",
+		orbPosition[0],orbPosition[1],orbPosition[2],double(orbSize));
+	
+	Misc::formattedConsoleNote("VoiceAssistant: display center at (%.3f,%.3f,%.3f)",getDisplayCenter()[0],getDisplayCenter()[1],getDisplayCenter()[2]);
+	}
+
 void VoiceAssistant::frame(void)
 	{
 	double elapsed = getApplicationTime()-stateStartTime;
 	
-
 	// THESE ARE FOR TESTING PURPOSES ONLY, to demonstrate state changes without needing a voice input
 	// Each press command will cycle through these states
+
+	// Fake loading lasts 3 seconds for now
+	const double warmupDuration = 3;
+	if(state==Warmup && elapsed>=warmupDuration) applyState(Idle);
 
 	//Give user a bit more time to talk after lifting the button
 	const double listeningBufferDuration = .3;
 	const double thinkingDuration = 3; // seconds before Thinking auto-advances to Speaking
 	const double speakingDuration = 3; // seconds before Speaking auto-advances to Idle
+
+	// If not listening user not speaking, reset the userIsSpeaking flag
+	if(state!=Listening && userIsSpeaking)
+		{
+		userIsSpeaking = false;
+		}
 
 	// Update speaking time
 	if(state==Listening)
@@ -91,21 +141,20 @@ void VoiceAssistant::frame(void)
 	else if(state==Thinking && elapsed>=thinkingDuration) applyState(Speaking);
 	else if(state==Speaking && elapsed>=speakingDuration) applyState(Idle);
 
-	// Update the assistant's position and orientation based on main viewer's position
-	Point headPos = getMainViewer()->getHeadPosition();
-	Vector viewDir = getMainViewer()->getViewDirection();
-	Vector up = getUpDirection();
-	Vector right = viewDir ^ up; // cross product to get right vector
+	//keep orb facing player's view direction
 
-	Scalar forwardDist = Scalar(1.5)*getInchFactor();  // how far in front
-	Scalar rightOffset = Scalar(.25)*getInchFactor();   // pushed toward the right edge
-	Scalar upOffset    = Scalar(.25)*getInchFactor();   // pushed toward the top edge
+	//gets and normalizes vector pointing from orb to head position
+	Vector faceNormal = getMainViewer()->getHeadPosition() - orbPosition;
+	faceNormal.normalize();
 
-	orbPosition = headPos + viewDir*forwardDist + right*rightOffset + up*upOffset;
-	orbOrientation = Rotation::fromBaseVectors(right,up);
+	//now point it in that direction
+	Vector envUp = getUpDirection();
+	Vector right = envUp ^ faceNormal;
+	right.normalize();
+	Vector billboardUp = faceNormal ^ right;
 
-	Vislet::frame();
-	Vrui::requestUpdate();
+	// Set element of rotation to face user
+	orbOrientation = Rotation::fromBaseVectors(right,billboardUp);
 	}
 
 // Local function to this cpp file for debugging or informational purposes: 
@@ -199,6 +248,9 @@ void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin,const
 	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
 	thisPtr->applyState(Listening);
 	thisPtr->userIsSpeaking = true;
+
+	//change orb spawn location
+	thisPtr->setOrbSpawnAndSize();
 	}
 
 //Called by saying voiceAssistant.release
@@ -283,7 +335,7 @@ GLfloat pulseEnvelope(GLfloat phase)
 
 void VoiceAssistant::display(GLContextData& contextData) const
 	{
-	GLfloat scale = .02f*GLfloat(getInchFactor()); // the one dial -- everything below is scale*someMultiplier
+	GLfloat radius = GLfloat(orbSize)*0.5f;
 	double elapsed = getApplicationTime()-stateStartTime;
 
 	glPushMatrix();
@@ -296,10 +348,10 @@ void VoiceAssistant::display(GLContextData& contextData) const
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA,GL_ONE); // additive: glows over whatever's behind instead of darkening it toward black
 
-	GLfloat ringCenterR = scale*0.9f;
-	GLfloat ringHalfThickness = scale*0.16f; // 20% thinner than the original 0.2 half-thickness
+	GLfloat ringCenterR = radius*0.9f;
+	GLfloat ringHalfThickness = radius*0.16f; // 20% thinner than the original 0.2 half-thickness
 	GLfloat innerR = ringCenterR-ringHalfThickness, outerR = ringCenterR+ringHalfThickness;
-	GLfloat ringOffset = scale*0.35f;
+	GLfloat ringOffset = radius*0.35f;
 	GLColor<GLfloat,4> base = getStateColor(state);
 
 	switch(state)
@@ -344,8 +396,8 @@ void VoiceAssistant::display(GLContextData& contextData) const
 
 			// Glow grows/shrinks with brightness; its half-thickness at full pulse is
 			// the 20%-thinner base ring thickness, capped an extra 30% thinner on top.
-			GLfloat glowCenterR = scale*0.95f;
-			GLfloat glowMaxHalfThickness = scale*0.45f*0.8f*0.7f;
+			GLfloat glowCenterR = radius*0.95f;
+			GLfloat glowMaxHalfThickness = radius*0.45f*0.8f*0.7f;
 			GLfloat glowHalfThicknessA = glowMaxHalfThickness*pulseA;
 			GLfloat glowHalfThicknessB = glowMaxHalfThickness*pulseB;
 
@@ -362,8 +414,8 @@ void VoiceAssistant::display(GLContextData& contextData) const
 			{
 			// Both rings open (grow) and close (shrink) together, same time
 			GLfloat openness = 0.5f+0.5f*Math::sin(GLfloat(elapsed)*4.0f);
-			GLfloat speakCenterR = scale*(0.7f+0.45f*openness);
-			GLfloat speakHalfThickness = scale*(0.16f+0.04f*openness); // 20% thinner than before
+			GLfloat speakCenterR = radius*(0.7f+0.45f*openness);
+			GLfloat speakHalfThickness = radius*(0.16f+0.04f*openness); // 20% thinner than before
 			GLfloat speakInnerR = speakCenterR-speakHalfThickness;
 			GLfloat speakOuterR = speakCenterR+speakHalfThickness;
 
