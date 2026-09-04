@@ -210,7 +210,7 @@ class VoiceAssistant:public Vislet
 
 	/* Embedded classes: */
 	public:
-	enum OrbState { Warming, Idle, Listening, Thinking, Speaking, Error };
+	enum OrbState { Warmup, Idle, Listening, Thinking, Speaking, Error };
 
 	/* Elements: */
 	private:
@@ -219,6 +219,9 @@ class VoiceAssistant:public Vislet
 	Rotation orbOrientation;
 	OrbState state;
 	double stateStartTime;
+
+	/* Private methods: */
+	static void testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
 
 	/* Constructors and destructors: */
 	public:
