@@ -30,22 +30,15 @@ Methods of class VoiceAssistant:
 VoiceAssistant::VoiceAssistant(int numArguments,const char* const arguments[])
 	:Vislet(), state(Idle), stateStartTime(0.0), userFinishedSpeakingTime(0.0), userIsSpeaking(false)
 	{
-		activeInstance=this;
 	}
 
 VoiceAssistant::~VoiceAssistant(void)
 	{
-		activeInstance=0;
 	}
 
 VisletFactory* VoiceAssistant::getFactory(void) const
 	{
 	return factory;
-	}
-
-VoiceAssistant* VoiceAssistant::getActiveInstance(void) // Returns the currently running instance, or null if none is active
-	{
-	return activeInstance;
 	}
 
 void VoiceAssistant::enable(bool startup)
@@ -502,7 +495,6 @@ extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
 Static elements of class VoiceAssistant:
 ******************************************/
 VoiceAssistantFactory* VoiceAssistant::factory=0;
-VoiceAssistant* VoiceAssistant::activeInstance=0;
 }
 }
 

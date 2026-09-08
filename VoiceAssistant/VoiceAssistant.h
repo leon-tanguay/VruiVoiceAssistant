@@ -217,7 +217,6 @@ class VoiceAssistant:public Vislet
 	/* Elements: */
 	private:
 	static VoiceAssistantFactory* factory;
-	static VoiceAssistant* activeInstance;
 	Point orbPosition;
 	Rotation orbOrientation;
 	OrbState state;
@@ -244,7 +243,6 @@ class VoiceAssistant:public Vislet
 	virtual void display(GLContextData& contextData) const;
 
 	/* Methods: */
-	static VoiceAssistant* getActiveInstance(void);
 	void applyState(OrbState newState);
 	void setOrbSpawnAndSize(void);
 	};
