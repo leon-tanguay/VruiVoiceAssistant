@@ -1,6 +1,31 @@
 /***********************************************************************
 VoiceAssistant - See VoiceAssistant.h.
 ***********************************************************************/
+//TRY RENDERING AS GLOW ON EDGES OF FRONT PLANE
+// rectangle vignette style object
+//USE SCENE GRAPH ARCHITECTURE, AND INSERT INTO SCENE GRAPH 
+// find rectange that fits the front planes of the viewer
+// Put something in 3d space consistently for both eyes, and in front of the user, and at a consistent size
+// -setConfig "Window/panningViewport=false"
+// -vruiVerbose
+
+
+// VRui now contains centralized audio
+// SoundContext Class - 2 methods : registers recording callback or removes them
+// auto starts and stops audio recording and playback
+// add or remove the callback to the sound context, and it will be called when audio is available
+// set default for how far into the screen the gradient goes
+// all configurable
+// look at some of vislets for how configuration works
+// there is well configured space already in vrui on where vislet configs go
+// vosk chunk of audio straight from vrui w translator function
+
+// VISLETS HAVE ISACTIVE METHOD
+// vislet config usuaslly associated with factory for vislet
+// in vislet factory constructor - point me at config place and read the instructionf from thre
+// look at device renderer vislet as example
+// cave renderer (on vrui github) - has more config data
+// factory has factory defualt config and the n the tool can override it
 
 #include "VoiceAssistant.h"
 
@@ -43,6 +68,13 @@ VisletFactory* VoiceAssistant::getFactory(void) const
 
 void VoiceAssistant::enable(bool startup)
 	{
+	//Implement to actually use the startup command line arg
+	//Startup is only true on the first enable call
+	//Remove the command Callbacks when vislet disabled
+
+	// SOLUTION - if enabled or disabled in the callbacks, then have them just print to the console that it is inactive
+
+
 	Vislet::enable(startup);
 	Misc::consoleNote("VoiceAssistant: starting");
 
@@ -73,7 +105,14 @@ void VoiceAssistant::setOrbSpawnAndSize(void)
 	// Update the assistant's position and orientation based on main viewer's position
 	Point headPos = getMainViewer()->getHeadPosition();
 	Vector viewDir = getMainViewer()->getViewDirection();
+	// figure out way to simplify using a transformation via the headPos and viewDir
+	// Create frame via up dir and viewDir, then use that to transform the orb's position and orientation
+	// now can say "put it at x = .1m, y = blah blah blah"
 	Vector up = getUpDirection();
+
+	// viewDir is now horizontal
+	viewDir.orthogonalize(up).normalize();
+	
 	Vector right = viewDir ^ up; // cross product to get right vector
 	right.normalize(); // ensure right vector is unit length
 
@@ -81,6 +120,8 @@ void VoiceAssistant::setOrbSpawnAndSize(void)
 	Scalar rightOffset = Scalar(.1)*getMeterFactor();   // a bit to right of center
 	Scalar upOffset    = Scalar(-.001)*getMeterFactor();   // a bit below eye level
 	Scalar spawnDistance = Math::sqrt(Math::sqr(forwardDist) + Math::sqr(rightOffset) + Math::sqr(upOffset));
+	
+	// ***NOTE - WE CAN SIMPLIFY THIS VIA A TRANSFORMATION
 
 	// Rough point before adjusted via UIManager
 	Point rawAnchor = headPos + viewDir*forwardDist + right*rightOffset + up*upOffset;
@@ -140,6 +181,8 @@ void VoiceAssistant::frame(void)
 
 	//keep orb facing player's view direction
 
+	// ***NOTE: CAN ALSO BE SIMPLIFIED VIA UI MANAGER
+
 	//gets and normalizes vector pointing from orb to head position
 	Vector faceNormal = getMainViewer()->getHeadPosition() - orbPosition;
 	faceNormal.normalize();
@@ -153,13 +196,14 @@ void VoiceAssistant::frame(void)
 	// Set element of rotation to face user
 	orbOrientation = Rotation::fromBaseVectors(right,billboardUp);
 
-	// Update drawing
+	// Update drawing (scheduled to next visual frame, can be configured)
 	if(state!=Idle)
-		Vrui::requestUpdate();
+		scheduleUpdate(getNextAnimationTime());
 	}
 
 // Local function to this cpp file for debugging or informational purposes: 
 // returns a string representation of the OrbState enum
+
 const char* getStateName(VoiceAssistant::OrbState state)
 	{
 	switch(state)
@@ -336,8 +380,28 @@ GLfloat pulseEnvelope(GLfloat phase)
 
 void VoiceAssistant::display(GLContextData& contextData) const
 	{
+	// ***NOTE: OLD WAY OF DOING IT VIA VRUI (not gonna do this one)
+	// Vrui base class transparent object
+	// Derive voice assistant from transparent object
+	// Gives a method called glTransparentRenderAction()
+	// OpenGL code will be called via separate render pass for transparent objects
+	// TRansparent objects are all rendered in physical coordinates
+
+	// **NOTE: NEW WAY OF DOING IT VIA VRUI (do this)
+	// Go through scene graph architecture, better for future forward
+	// Create separate scene graph node that does rendering, and insert into scene graph
+	// Makes management easier, and gives a bunch of helpers such as billboard node, etc. (billboard faces user)
+	// 2 separate scene graphs (nav vs phys spaces)
+	// Makes it easy to graph in physical
+	// separate opaque and transparent render passes
+	// Look at the vrui example programs as way to work with scene graph architecture, and how to insert a node into the scene graph
+
 	GLfloat radius = GLfloat(orbSize)*0.5f;
 	double elapsed = getApplicationTime()-stateStartTime;
+
+	// if orb is defined as a single transformation than you can multiply onto matrix stack it via cpp
+	// define orb as an ***orthonormal*** translation (translation, rotation)
+	// makes much easier to transform, inverse transform, more ability to manipulate
 
 	glPushMatrix();
 	glTranslate(orbPosition-Point::origin);
@@ -497,4 +561,3 @@ Static elements of class VoiceAssistant:
 VoiceAssistantFactory* VoiceAssistant::factory=0;
 }
 }
-

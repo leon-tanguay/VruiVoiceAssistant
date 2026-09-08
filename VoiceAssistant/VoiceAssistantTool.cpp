@@ -5,6 +5,10 @@
 #include <Vrui/ToolManager.h>
 #include <Vrui/Vrui.h>
 
+// DEFINE THE TOOL CLASS INSIDE OF VISLET (LOOK THRU EXAMPLES FOR TEMPLATE)
+
+// TAKE A NUMBER OF INPUTS, AND ASSIGN TO A TOOL (TOOL INPUT ASSIGNMENT)
+
 namespace Vrui 
 {
 
