@@ -221,7 +221,7 @@ class VoiceAssistant:public Vislet
 	class VoiceAssistantToolFactory:public ToolFactory
 		{
 		friend class VoiceAssistantTool;
-		friend class VoiceAssistantToolFactory;
+		friend class VoiceAssistant;
 		
 		/* Elements: */
 		private:
@@ -242,7 +242,8 @@ class VoiceAssistant:public Vislet
 	class VoiceAssistantTool:public UtilityTool
 		{
 		friend class VoiceAssistantToolFactory;
-
+		friend class VoiceAssistant;
+		
 		/* Elements: */
 		private:
 		static VoiceAssistantToolFactory* factory;
@@ -250,7 +251,7 @@ class VoiceAssistant:public Vislet
 		/* Constructors and destructors: */
 		public:
 		VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment);
-
+		
 		/* Methods from Tool: */
 		virtual const ToolFactory* getFactory(void) const;
 		virtual void buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData);
