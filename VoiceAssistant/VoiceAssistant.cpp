@@ -40,6 +40,7 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <Misc/CommandDispatcher.h>
 #include <Misc/MessageLogger.h>
 
+#include <Vrui/ToolManager.h>
 #include <Vrui/UIManager.h>
 #include <Vrui/Vrui.h>
 #include <Vrui/Viewer.h>
@@ -49,6 +50,82 @@ namespace Vrui {
 
 namespace Vislets {
 
+/*******************************************
+Methods of class VoiceAssistantToolFactory:
+*******************************************/
+
+VoiceAssistant::VoiceAssistantToolFactory::VoiceAssistantToolFactory(ToolManager& toolManager,VoiceAssistant* sVoiceAssistant)
+	:ToolFactory("VoiceAssistantTool",toolManager),
+	 voiceAssistant(sVoiceAssistant)
+	{
+	layout.setNumButtons(1);
+
+	ToolFactory* utilityToolFactory=toolManager.loadClass("UtilityTool");
+	utilityToolFactory->addChildClass(this);
+	addParentClass(utilityToolFactory);
+
+	VoiceAssistantTool::factory=this;
+	}
+
+VoiceAssistant::VoiceAssistantToolFactory::~VoiceAssistantToolFactory(void)
+	{
+	VoiceAssistantTool::factory=0;
+	}
+
+const char* VoiceAssistant::VoiceAssistantToolFactory::getName(void) const
+	{
+	return "Voice Assistant Push-to-Talk";
+	}
+
+const char* VoiceAssistant::VoiceAssistantToolFactory::getButtonFunction(int) const
+	{
+	return "Push-to-Talk";
+	}
+
+Tool* VoiceAssistant::VoiceAssistantToolFactory::createTool(const ToolInputAssignment& inputAssignment) const
+	{
+	return new VoiceAssistantTool(this,inputAssignment);
+	}
+
+void VoiceAssistant::VoiceAssistantToolFactory::destroyTool(Tool* tool) const
+	{
+	delete tool;
+	}
+
+/********************************************
+Static elements of class VoiceAssistantTool:
+********************************************/
+VoiceAssistant::VoiceAssistantToolFactory* VoiceAssistant::VoiceAssistantTool::factory=0;
+
+/*********************************
+Methods of class VoiceAssistantTool:
+*********************************/
+
+VoiceAssistant::VoiceAssistantTool::VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment)
+	:UtilityTool(factory,inputAssignment)
+	{
+	}
+
+const ToolFactory* VoiceAssistant::VoiceAssistantTool::getFactory(void) const
+	{
+	return factory;
+	}
+
+void VoiceAssistant::VoiceAssistantTool::buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData)
+	{
+	if(cbData->newButtonState)
+		{
+		const char command[] = "voiceAssistant.press";
+    	// No need to include string.h because sizeof minus one is known at compile time
+		Vrui::getCommandDispatcher().dispatchCommand(command,command+sizeof(command)-1);
+		}
+	else
+		{
+		const char command[] = "voiceAssistant.release";
+		Vrui::getCommandDispatcher().dispatchCommand(command,command+sizeof(command)-1);
+		}
+	}
+	
 /*************************************
 Methods of class VoiceAssistant:
 *************************************/
@@ -74,7 +151,6 @@ void VoiceAssistant::enable(bool startup)
 
 	// SOLUTION - if enabled or disabled in the callbacks, then have them just print to the console that it is inactive
 
-
 	Vislet::enable(startup);
 	Misc::consoleNote("VoiceAssistant: starting");
 
@@ -88,6 +164,10 @@ void VoiceAssistant::enable(bool startup)
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release",&VoiceAssistant::voiceAssistantReleaseCallback,this,0,
 		"Release a voice assistant request (simulate releasing the button)");
 
+	//Add tool
+	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(),this),
+		Vrui::ToolManager::defaultToolFactoryDestructor);
+
 	//start on warmup
 	applyState(Warmup);
 
@@ -96,6 +176,7 @@ void VoiceAssistant::enable(bool startup)
 
 void VoiceAssistant::disable(bool shutdown)
 	{
+	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
 	Vislet::disable(shutdown);
 	Misc::consoleNote("VoiceAssistant: stopping");
 	}
@@ -559,5 +640,7 @@ extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
 Static elements of class VoiceAssistant:
 ******************************************/
 VoiceAssistantFactory* VoiceAssistant::factory=0;
+
 }
+
 }

@@ -191,10 +191,12 @@ practice with a new Vrui class, not required for correctness.
 #ifndef VRUI_VISLETS_VOICEASSISTANT_INCLUDED
 #define VRUI_VISLETS_VOICEASSISTANT_INCLUDED
 
-#include <Vrui/Vislet.h>
-#include <Vrui/Types.h>
 #include <Geometry/Point.h>
 #include <Geometry/Rotation.h>
+
+#include <Vrui/Types.h>
+#include <Vrui/Vislet.h>
+#include <Vrui/UtilityTool.h>
 
 class GLContextData;
 
@@ -206,6 +208,7 @@ namespace Vislets
 
 class VoiceAssistantFactory;
 
+
 class VoiceAssistant:public Vislet
 	{
 	friend class VoiceAssistantFactory;
@@ -213,6 +216,45 @@ class VoiceAssistant:public Vislet
 	/* Embedded classes: */
 	public:
 	enum OrbState { Warmup, Idle, Listening, Thinking, Speaking, Error };
+
+	// Classes for activated voice assistant tool
+	class VoiceAssistantToolFactory:public ToolFactory
+		{
+		friend class VoiceAssistantTool;
+		friend class VoiceAssistantToolFactory;
+		
+		/* Elements: */
+		private:
+		VoiceAssistant* voiceAssistant;
+
+		/* Constructors and destructors: */
+		public:
+		VoiceAssistantToolFactory(ToolManager& toolManager,VoiceAssistant* sVoiceAssistant);
+		virtual ~VoiceAssistantToolFactory(void);
+
+		/* Methods from ToolFactory: */
+		virtual const char* getName(void) const;
+		virtual const char* getButtonFunction(int buttonSlotIndex) const;
+		virtual Tool* createTool(const ToolInputAssignment& inputAssignment) const;
+		virtual void destroyTool(Tool* tool) const;
+		};
+
+	class VoiceAssistantTool:public UtilityTool
+		{
+		friend class VoiceAssistantToolFactory;
+
+		/* Elements: */
+		private:
+		static VoiceAssistantToolFactory* factory;
+
+		/* Constructors and destructors: */
+		public:
+		VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment);
+
+		/* Methods from Tool: */
+		virtual const ToolFactory* getFactory(void) const;
+		virtual void buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData);
+		};
 
 	/* Elements: */
 	private:
