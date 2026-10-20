@@ -13,7 +13,8 @@ Json did, just with Vrui's own type. Don't include "Json.h" here.
 #ifndef VOICEASSISTANT_COMMANDCATALOG_INCLUDED
 #define VOICEASSISTANT_COMMANDCATALOG_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare CommandCatalog (../guide/RECODE_CHECKLIST.md item 4).
 

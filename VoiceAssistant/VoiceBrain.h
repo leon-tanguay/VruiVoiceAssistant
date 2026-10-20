@@ -55,7 +55,8 @@ already back from the blocking call.
 #ifndef VOICEASSISTANT_VOICEBRAIN_INCLUDED
 #define VOICEASSISTANT_VOICEBRAIN_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare VoiceBrain (../guide/RECODE_CHECKLIST.md item 10).
 

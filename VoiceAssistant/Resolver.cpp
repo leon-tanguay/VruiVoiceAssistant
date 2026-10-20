@@ -4,7 +4,8 @@ Resolver - See Resolver.h.
 
 #include "Resolver.h"
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: implement Resolver (../guide/RECODE_CHECKLIST.md item 9).
 

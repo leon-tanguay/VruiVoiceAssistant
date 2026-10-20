@@ -13,7 +13,8 @@ Resolver.h uses for Ollama's replies -- not the old hand-rolled Json class.
 #ifndef VOICEASSISTANT_STTENGINE_INCLUDED
 #define VOICEASSISTANT_STTENGINE_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare SttEngine (../guide/RECODE_CHECKLIST.md item 6).
 

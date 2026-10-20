@@ -7,7 +7,8 @@ supposed to do and what's wrong with v1's version).
 #ifndef VOICEASSISTANT_TTS_INCLUDED
 #define VOICEASSISTANT_TTS_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare Tts (../guide/RECODE_CHECKLIST.md item 8).
 

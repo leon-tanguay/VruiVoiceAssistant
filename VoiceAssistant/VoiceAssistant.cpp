@@ -9,7 +9,6 @@ VoiceAssistant - See VoiceAssistant.h.
 // -setConfig "Window/panningViewport=false"
 // -vruiVerbose
 
-
 // VRui now contains centralized audio
 // SoundContext Class - 2 methods : registers recording callback or removes them
 // Auto starts and stops audio recording and playback
@@ -55,36 +54,37 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <Vrui/Vrui.h>
 #include <Vrui/VRWindow.h>
 
-namespace Vrui {
+namespace Vrui
+{
 
-namespace Vislets {
-
+namespace Vislets
+{
 
 /*************************************
 Used for the halo glow on the edges of the screen
 *************************************/
-typedef Geometry::Point<Scalar,2> Point2;   // A point on the screen plane, in screen coordinates
-typedef Geometry::Vector<Scalar,2> Vector2; // A direction on the screen plane
+typedef Geometry::Point<Scalar, 2> Point2; // A point on the screen plane, in screen coordinates
+typedef Geometry::Vector<Scalar, 2> Vector2; // A direction on the screen plane
 
 struct ScreenCorner
-	{
+{
 	Point2 position; // Position of the corner in screen coordinates
-	Vector2 inward;  // Direction from the corner toward the center of the screen, in screen coordinates
+	Vector2 inward; // Direction from the corner toward the center of the screen, in screen coordinates
 
-	ScreenCorner(const Point2& sPosition, const Vector2& sInward)
-		:position(sPosition), inward(sInward)
-		{
-		}
-	};
+	ScreenCorner(const Point2& sPosition, const Vector2& sInward) :
+		position(sPosition), inward(sInward)
+	{
+	}
+};
 
 /*************************************
 Local functions of the c++ file
 *************************************/
 
 const char* getStateName(VoiceAssistant::AssistantState state)
+{
+	switch (state)
 	{
-	switch(state)
-		{
 		case VoiceAssistant::Warmup:
 			return "Warmup";
 		case VoiceAssistant::Idle:
@@ -97,56 +97,55 @@ const char* getStateName(VoiceAssistant::AssistantState state)
 			return "Speaking";
 		case VoiceAssistant::Error:
 			return "Error";
-		}
-	return "Unknown";
 	}
+	return "Unknown";
+}
 
 // Local function to this cpp file
-GLColor<GLfloat,4> getStateColor(VoiceAssistant::AssistantState state)
+GLColor<GLfloat, 4> getStateColor(VoiceAssistant::AssistantState state)
+{
+	switch (state)
 	{
-	switch(state)
-		{
 		case VoiceAssistant::Warmup:
-			return GLColor<GLfloat,4>(0.9f,0.9f,0.95f); // Dim grey: powering up
+			return GLColor<GLfloat, 4>(0.9f, 0.9f, 0.95f); // Dim grey: powering up
 		case VoiceAssistant::Idle:
-			return GLColor<GLfloat,4>(0.3f,0.5f,0.6f); // Muted cyan-grey: resting
+			return GLColor<GLfloat, 4>(0.3f, 0.5f, 0.6f); // Muted cyan-grey: resting
 		case VoiceAssistant::Listening:
-			return GLColor<GLfloat,4>(1.0f,0.9f,0.2f); // Yellow: actively listening
+			return GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f); // Yellow: actively listening
 		case VoiceAssistant::Thinking:
-			return GLColor<GLfloat,4>(0.3f,0.5f,1.0f); // Blue: processing
+			return GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f); // Blue: processing
 		case VoiceAssistant::Speaking:
-			return GLColor<GLfloat,4>(0.2f,1.0f,0.4f); // Green: responding
+			return GLColor<GLfloat, 4>(0.2f, 1.0f, 0.4f); // Green: responding
 		case VoiceAssistant::Error:
-			return GLColor<GLfloat,4>(1.0f,0.05f,0.05f); // Intense red: error
-		}
-	return GLColor<GLfloat,4>(1.0f,1.0f,1.0f); // Unreachable if every case handled, keeps compiler happy
+			return GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f); // Intense red: error
 	}
+	return GLColor<GLfloat, 4>(1.0f, 1.0f, 1.0f); // Unreachable if every case handled, keeps compiler happy
+}
 
-void drawEdgeGlow(const GLColor<GLfloat,4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, const int numBands, const Scalar& opacity)
-	{
+void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, const int numBands, const Scalar& opacity)
+{
 	glBegin(GL_QUAD_STRIP);
-	for(int i=0;i<=numBands;++i)
-		{
-		Scalar inwardFraction = Scalar(i)/Scalar(numBands); // How far into halo we are, 0=at edge, 1=at inner edge of halo
-		Scalar inwardDistance = inwardFraction*haloWidth; // How far into the screen we are, in screen coordinates
+	for (int i = 0; i <= numBands; ++i)
+	{
+		Scalar inwardFraction = Scalar(i) / Scalar(numBands); // How far into halo we are, 0=at edge, 1=at inner edge of halo
+		Scalar inwardDistance = inwardFraction * haloWidth; // How far into the screen we are, in screen coordinates
 
 		Scalar alpha = Math::pow(1.0 - inwardFraction, haloFalloff) * opacity; // How strong the glow is, 0=transparent, 1=full
-		GLColor<GLfloat,4> bandColor(color[0],color[1],color[2],GLfloat(alpha)); // Cast alpha as GLFloat to avoid compiler warning about narrowing conversion
+		GLColor<GLfloat, 4> bandColor(color[0], color[1], color[2], GLfloat(alpha)); // Cast alpha as GLFloat to avoid compiler warning about narrowing conversion
 		glColor(bandColor);
 
-		glVertex(startCorner.position+startCorner.inward*inwardDistance);
-		glVertex(endCorner.position+endCorner.inward*inwardDistance);
-		}
-	glEnd();
+		glVertex(startCorner.position + startCorner.inward * inwardDistance);
+		glVertex(endCorner.position + endCorner.inward * inwardDistance);
 	}
-
+	glEnd();
+}
 
 /*******************************************
 Definition of class VoiceAssistant::HaloNode:
 *******************************************/
 
-class VoiceAssistant::HaloNode:public SceneGraph::GraphNode
-	{
+class VoiceAssistant::HaloNode : public SceneGraph::GraphNode
+{
 	public:
 	HaloNode(VoiceAssistant* sVoiceAssistant);
 	virtual const char* getClassName(void) const;
@@ -154,40 +153,38 @@ class VoiceAssistant::HaloNode:public SceneGraph::GraphNode
 
 	private:
 	VoiceAssistant* voiceAssistant;
-	};
+};
 
 /*************************************
 Methods of class VoiceAssistant::HaloNode:
 *************************************/
-VoiceAssistant::HaloNode::HaloNode(VoiceAssistant* sVoiceAssistant)
-	:voiceAssistant(sVoiceAssistant)
-	{
+VoiceAssistant::HaloNode::HaloNode(VoiceAssistant* sVoiceAssistant) :
+	voiceAssistant(sVoiceAssistant)
+{
 	/* Only traverse this node during the transparent OpenGL rendering pass: */
-	passMask=SceneGraph::GraphNode::GLTransparentRenderPass;
-	}
+	passMask = SceneGraph::GraphNode::GLTransparentRenderPass;
+}
 
 const char* VoiceAssistant::HaloNode::getClassName(void) const
-	{
+{
 	return "VoiceAssistant::Halo";
-	}
+}
 
 void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderState) const
-	{
-
+{
 	// Don't draw anything in idle state
-	if (voiceAssistant->state==VoiceAssistant::Idle) return; // Don't draw anything in idle state
+	if (voiceAssistant->state == VoiceAssistant::Idle) return; // Don't draw anything in idle state
 
 	// Number of bands in custom gradient, more bands = smoother gradient, but more expensive to render
-	const int numBands=24;
-	const Scalar minPulse=0.4; // How dim the glow gets at its minimum, 0=off, 1=always full brightness
-
+	const int numBands = 24;
+	const Scalar minPulse = 0.4; // How dim the glow gets at its minimum, 0=off, 1=always full brightness
 
 	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
 	const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * voiceAssistant->factory->haloPulseSpeed); // Oscillates between 0 and 1, with a period of 2*haloPulseSpeed seconds
 	const Scalar pulse = minPulse + (1 - minPulse) * wave;
 	const Scalar opacity = pulse * voiceAssistant->factory->haloMaxAlpha;
 
-	GLColor<GLfloat,4> color = getStateColor(voiceAssistant->state);
+	GLColor<GLfloat, 4> color = getStateColor(voiceAssistant->state);
 
 	// Get screen size and orientation
 	const DisplayState& displayState = getDisplayState(renderState.contextData);
@@ -204,12 +201,11 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 
 	const Scalar haloWidth = Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom) * voiceAssistant->factory->haloThickness;
 
-
 	// Render state setup
 	renderState.disableMaterials();
 	renderState.disableTextures();
 	renderState.disableCulling();
-	renderState.blendFunc(GL_SRC_ALPHA,GL_ONE);
+	renderState.blendFunc(GL_SRC_ALPHA, GL_ONE);
 	renderState.uploadModelview();
 
 	glPushMatrix();
@@ -217,10 +213,10 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	glMultMatrix(screenTransform);
 
 	// Create 4 corner objects
-	const ScreenCorner bottomLeft(Point2(visibleLeft,visibleBottom),Vector2(1,1));
-	const ScreenCorner bottomRight(Point2(visibleRight,visibleBottom),Vector2(-1,1));
-	const ScreenCorner topRight(Point2(visibleRight,visibleTop),Vector2(-1,-1));
-	const ScreenCorner topLeft(Point2(visibleLeft,visibleTop),Vector2(1,-1));
+	const ScreenCorner bottomLeft(Point2(visibleLeft, visibleBottom), Vector2(1, 1));
+	const ScreenCorner bottomRight(Point2(visibleRight, visibleBottom), Vector2(-1, 1));
+	const ScreenCorner topRight(Point2(visibleRight, visibleTop), Vector2(-1, -1));
+	const ScreenCorner topLeft(Point2(visibleLeft, visibleTop), Vector2(1, -1));
 
 	// Left edge
 	drawEdgeGlow(color, bottomLeft, topLeft, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
@@ -235,103 +231,103 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	drawEdgeGlow(color, bottomLeft, bottomRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
 
 	glPopMatrix();
-	}
+}
 
 /*******************************************
 Methods of class VoiceAssistantToolFactory:
 *******************************************/
 
-VoiceAssistant::VoiceAssistantToolFactory::VoiceAssistantToolFactory(ToolManager& toolManager,VoiceAssistant* sVoiceAssistant)
-	:ToolFactory("VoiceAssistantTool",toolManager),
-	 voiceAssistant(sVoiceAssistant)
-	{
+VoiceAssistant::VoiceAssistantToolFactory::VoiceAssistantToolFactory(ToolManager& toolManager, VoiceAssistant* sVoiceAssistant) :
+	ToolFactory("VoiceAssistantTool", toolManager),
+	voiceAssistant(sVoiceAssistant)
+{
 	layout.setNumButtons(1);
 
-	ToolFactory* utilityToolFactory=toolManager.loadClass("UtilityTool");
+	ToolFactory* utilityToolFactory = toolManager.loadClass("UtilityTool");
 	utilityToolFactory->addChildClass(this);
 	addParentClass(utilityToolFactory);
 
-	VoiceAssistantTool::factory=this;
-	}
+	VoiceAssistantTool::factory = this;
+}
 
 VoiceAssistant::VoiceAssistantToolFactory::~VoiceAssistantToolFactory(void)
-	{
-	VoiceAssistantTool::factory=0;
-	}
+{
+	VoiceAssistantTool::factory = 0;
+}
 
 const char* VoiceAssistant::VoiceAssistantToolFactory::getName(void) const
-	{
+{
 	return "Voice Assistant Push-to-Talk";
-	}
+}
 
 const char* VoiceAssistant::VoiceAssistantToolFactory::getButtonFunction(int) const
-	{
+{
 	return "Push-to-Talk";
-	}
+}
 
 Tool* VoiceAssistant::VoiceAssistantToolFactory::createTool(const ToolInputAssignment& inputAssignment) const
-	{
-	return new VoiceAssistantTool(this,inputAssignment);
-	}
+{
+	return new VoiceAssistantTool(this, inputAssignment);
+}
 
 void VoiceAssistant::VoiceAssistantToolFactory::destroyTool(Tool* tool) const
-	{
+{
 	delete tool;
-	}
+}
 
 /********************************************
 Static elements of class VoiceAssistantTool:
 ********************************************/
-VoiceAssistant::VoiceAssistantToolFactory* VoiceAssistant::VoiceAssistantTool::factory=0;
+VoiceAssistant::VoiceAssistantToolFactory* VoiceAssistant::VoiceAssistantTool::factory = 0;
 
 /*********************************
 Methods of class VoiceAssistantTool:
 *********************************/
 
-VoiceAssistant::VoiceAssistantTool::VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment)
-	:UtilityTool(factory,inputAssignment)
-	{
-	}
+VoiceAssistant::VoiceAssistantTool::VoiceAssistantTool(const ToolFactory* factory, const ToolInputAssignment& inputAssignment) :
+	UtilityTool(factory, inputAssignment)
+{
+}
 
 const ToolFactory* VoiceAssistant::VoiceAssistantTool::getFactory(void) const
-	{
+{
 	return factory;
-	}
+}
 
-void VoiceAssistant::VoiceAssistantTool::buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData)
+void VoiceAssistant::VoiceAssistantTool::buttonCallback(int buttonSlotIndex, InputDevice::ButtonCallbackData* cbData)
+{
+	if (cbData->newButtonState)
 	{
-	if(cbData->newButtonState)
-		{
 		const char command[] = "voiceAssistant.press";
 		// No need to include string.h because sizeof minus one is known at compile time
-		Vrui::getCommandDispatcher().dispatchCommand(command,command+sizeof(command)-1);
-		}
-	else
-		{
-		const char command[] = "voiceAssistant.release";
-		Vrui::getCommandDispatcher().dispatchCommand(command,command+sizeof(command)-1);
-		}
+		Vrui::getCommandDispatcher().dispatchCommand(command, command + sizeof(command) - 1);
 	}
+	else
+	{
+		const char command[] = "voiceAssistant.release";
+		Vrui::getCommandDispatcher().dispatchCommand(command, command + sizeof(command) - 1);
+	}
+}
 
 /*************************************
 Methods of class VoiceAssistant:
 *************************************/
-VoiceAssistant::VoiceAssistant(int numArguments,const char* const arguments[])
-	:Vislet(), haloNode(new HaloNode(this)),state(Idle),stateStartTime(0.0),userIsSpeaking(false),userFinishedSpeakingTime(0.0)
-	{
-	}
+VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) :
+	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0)
+{
+}
 
 VoiceAssistant::~VoiceAssistant(void)
-	{
-	}
+{
+}
 
 VisletFactory* VoiceAssistant::getFactory(void) const
-	{
+{
 	return factory;
-	}
+}
 
 void VoiceAssistant::enable(bool startup)
-	{
+{
 	// Implement to actually use the startup command line arg
 	// Startup is only true on the first enable call
 	// Remove the command callbacks when vislet disabled
@@ -341,18 +337,18 @@ void VoiceAssistant::enable(bool startup)
 	Vislet::enable(startup);
 	Misc::consoleNote("VoiceAssistant: starting");
 
-	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test",&VoiceAssistant::testCommandCallback,this,
-		"<stateName>","Switches the orb to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
+	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test", &VoiceAssistant::testCommandCallback, this,
+		"<stateName>", "Switches the orb to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
 
 	// The 0s here are the argument descriptions: these commands take no arguments ('this' is the userData)
-	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press",&VoiceAssistant::voiceAssistantPressCallback,this,0,
+	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press", &VoiceAssistant::voiceAssistantPressCallback, this, 0,
 		"Begin a voice assistant request (simulate pressing the button)");
 
-	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release",&VoiceAssistant::voiceAssistantReleaseCallback,this,0,
+	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release", &VoiceAssistant::voiceAssistantReleaseCallback, this, 0,
 		"Release a voice assistant request (simulate releasing the button)");
 
 	// Add tool
-	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(),this),
+	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(), this),
 		Vrui::ToolManager::defaultToolFactoryDestructor);
 
 	// Start on warmup
@@ -360,28 +356,28 @@ void VoiceAssistant::enable(bool startup)
 
 	// Add node to scene graph
 	getSceneGraphManager()->addPhysicalNode(*haloNode);
-	}
+}
 
 void VoiceAssistant::disable(bool shutdown)
-	{
+{
 	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
 	Vislet::disable(shutdown);
 	Misc::consoleNote("VoiceAssistant: stopping");
 
 	// Remove node from scene graph
 	getSceneGraphManager()->removePhysicalNode(*haloNode);
-	}
+}
 
 void VoiceAssistant::frame(void)
-	{
-	double elapsed = getApplicationTime()-stateStartTime;
+{
+	double elapsed = getApplicationTime() - stateStartTime;
 
 	// THESE ARE FOR TESTING PURPOSES ONLY, to demonstrate state changes without needing a voice input
 	// Each press command will cycle through these states
 
 	// Fake loading lasts 3 seconds for now
 	const double warmupDuration = 3;
-	if(state==Warmup && elapsed>=warmupDuration) applyState(Idle);
+	if (state == Warmup && elapsed >= warmupDuration) applyState(Idle);
 
 	// Give user a bit more time to talk after lifting the button
 	const double listeningBufferDuration = .3;
@@ -389,144 +385,146 @@ void VoiceAssistant::frame(void)
 	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
 
 	// If not listening user not speaking, reset the userIsSpeaking flag
-	if(state!=Listening && userIsSpeaking)
-		{
+	if (state != Listening && userIsSpeaking)
+	{
 		userIsSpeaking = false;
-		}
-
-	// Update finished speaking timer if user not speaking
-	if(state==Listening && !userIsSpeaking)
-		{
-			double elaspedSinceUserFinishedSpeaking = getApplicationTime()-userFinishedSpeakingTime;
-			if(elaspedSinceUserFinishedSpeaking>=listeningBufferDuration) applyState(Thinking);
-		}
-	else if(state==Thinking && elapsed>=thinkingDuration) applyState(Speaking);
-	else if(state==Speaking && elapsed>=speakingDuration) applyState(Idle);
-
-	// Update drawing (scheduled to next visual frame, can be configured)
-	if(state!=Idle)
-		scheduleUpdate(getNextAnimationTime());
 	}
 
-void VoiceAssistant::applyState(AssistantState newState)
+	// Update finished speaking timer if user not speaking
+	if (state == Listening && !userIsSpeaking)
 	{
-	if(state != newState)
-		{
+		double elaspedSinceUserFinishedSpeaking = getApplicationTime() - userFinishedSpeakingTime;
+		if (elaspedSinceUserFinishedSpeaking >= listeningBufferDuration) applyState(Thinking);
+	}
+	else if (state == Thinking && elapsed >= thinkingDuration)
+		applyState(Speaking);
+	else if (state == Speaking && elapsed >= speakingDuration)
+		applyState(Idle);
+
+	// Update drawing (scheduled to next visual frame, can be configured)
+	if (state != Idle)
+		scheduleUpdate(getNextAnimationTime());
+}
+
+void VoiceAssistant::applyState(AssistantState newState)
+{
+	if (state != newState)
+	{
 		state = newState;
 		stateStartTime = getApplicationTime();
 
 		// Use Vrui message logger to log state change without need for std::string
-		Misc::formattedConsoleNote("VoiceAssistant: state changed to %s",getStateName(state));
-		}
+		Misc::formattedConsoleNote("VoiceAssistant: state changed to %s", getStateName(state));
 	}
+}
 
 // Console command to test state changes, for debugging or demonstration purposes
 // Called in console via "voiceAssistant.test <stateName>"
 // Syntax uses the state names defined in the AssistantState enum or letters
-void VoiceAssistant::testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
-	{
-	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
-	std::string stateArg(argumentBegin,argumentEnd);
+void VoiceAssistant::testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
+{
+	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	std::string stateArg(argumentBegin, argumentEnd);
 
 	AssistantState newState;
-	if(strcasecmp(stateArg.c_str(),"warmup")==0 || strcasecmp(stateArg.c_str(),"w")==0) // Not case sensitive
-		newState=Warmup;
-	else if(strcasecmp(stateArg.c_str(),"idle")==0 || strcasecmp(stateArg.c_str(),"i")==0)
-		newState=Idle;
-	else if(strcasecmp(stateArg.c_str(),"listening")==0 || strcasecmp(stateArg.c_str(),"l")==0)
-		newState=Listening;
-	else if(strcasecmp(stateArg.c_str(),"thinking")==0 || strcasecmp(stateArg.c_str(),"t")==0)
-		newState=Thinking;
-	else if(strcasecmp(stateArg.c_str(),"speaking")==0 || strcasecmp(stateArg.c_str(),"s")==0)
-		newState=Speaking;
-	else if(strcasecmp(stateArg.c_str(),"error")==0 || strcasecmp(stateArg.c_str(),"e")==0)
-		newState=Error;
+	if (strcasecmp(stateArg.c_str(), "warmup") == 0 || strcasecmp(stateArg.c_str(), "w") == 0) // Not case sensitive
+		newState = Warmup;
+	else if (strcasecmp(stateArg.c_str(), "idle") == 0 || strcasecmp(stateArg.c_str(), "i") == 0)
+		newState = Idle;
+	else if (strcasecmp(stateArg.c_str(), "listening") == 0 || strcasecmp(stateArg.c_str(), "l") == 0)
+		newState = Listening;
+	else if (strcasecmp(stateArg.c_str(), "thinking") == 0 || strcasecmp(stateArg.c_str(), "t") == 0)
+		newState = Thinking;
+	else if (strcasecmp(stateArg.c_str(), "speaking") == 0 || strcasecmp(stateArg.c_str(), "s") == 0)
+		newState = Speaking;
+	else if (strcasecmp(stateArg.c_str(), "error") == 0 || strcasecmp(stateArg.c_str(), "e") == 0)
+		newState = Error;
 	else
-		{
-		Misc::formattedConsoleWarning("VoiceAssistant: unknown state \"%s\"",stateArg.c_str());
+	{
+		Misc::formattedConsoleWarning("VoiceAssistant: unknown state \"%s\"", stateArg.c_str());
 		return;
-		}
+	}
 
 	thisPtr->applyState(newState);
-	}
+}
 
 // Called by saying voiceAssistant.press
-void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
-	{
-	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
+void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
+{
+	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
 	thisPtr->applyState(Listening);
 	thisPtr->userIsSpeaking = true;
-	}
+}
 
 // Called by saying voiceAssistant.release
-void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
-	{
-	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
+void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
+{
+	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
 
 	/* If it is still listening by time it is released,
 	start timer before it actually stops listening to input */
 	if (thisPtr->state == Listening)
-		{
-			thisPtr->userIsSpeaking = false;
-			thisPtr->userFinishedSpeakingTime = getApplicationTime();
-		}
+	{
+		thisPtr->userIsSpeaking = false;
+		thisPtr->userFinishedSpeakingTime = getApplicationTime();
 	}
+}
 
 /*************************************
 Methods of class VoiceAssistantFactory:
 *************************************/
 
-VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager)
-	:VisletFactory("VoiceAssistant",visletManager),
-	haloThickness(0.08),haloMaxAlpha(0.8),haloFalloff(2.0),haloPulseSpeed(1.0)
-	{
-	VoiceAssistant::factory=this;
+VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
+	VisletFactory("VoiceAssistant", visletManager),
+	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0)
+{
+	VoiceAssistant::factory = this;
 
-	Misc::ConfigurationFileSection cfs=visletManager.getVisletClassSection(getClassName());
-	cfs.updateValue("./haloThickness",haloThickness);
-	cfs.updateValue("./haloMaxAlpha",haloMaxAlpha);
-	cfs.updateValue("./haloFalloff",haloFalloff);
-	cfs.updateValue("./haloPulseSpeed",haloPulseSpeed);
-	}
+	Misc::ConfigurationFileSection cfs = visletManager.getVisletClassSection(getClassName());
+	cfs.updateValue("./haloThickness", haloThickness);
+	cfs.updateValue("./haloMaxAlpha", haloMaxAlpha);
+	cfs.updateValue("./haloFalloff", haloFalloff);
+	cfs.updateValue("./haloPulseSpeed", haloPulseSpeed);
+}
 
 VoiceAssistantFactory::~VoiceAssistantFactory(void)
-	{
-	VoiceAssistant::factory=0;
-	}
+{
+	VoiceAssistant::factory = 0;
+}
 
-Vislet* VoiceAssistantFactory::createVislet(int numArguments,const char* const arguments[]) const
-	{
-	return new VoiceAssistant(numArguments,arguments);
-	}
+Vislet* VoiceAssistantFactory::createVislet(int numArguments, const char* const arguments[]) const
+{
+	return new VoiceAssistant(numArguments, arguments);
+}
 
 void VoiceAssistantFactory::destroyVislet(Vislet* vislet) const
-	{
+{
 	delete vislet;
-	}
+}
 
 /*************************************
 Boilerplate code for every Vrui plugin so the .so can be loaded at runtime:
 *************************************/
 
 extern "C" void resolveVoiceAssistantDependencies(Plugins::FactoryManager<VisletFactory>&)
-	{
-	}
+{
+}
 
 extern "C" VisletFactory* createVoiceAssistantFactory(Plugins::FactoryManager<VisletFactory>& manager)
-	{
-	VisletManager* visletManager=static_cast<VisletManager*>(&manager);
+{
+	VisletManager* visletManager = static_cast<VisletManager*>(&manager);
 	return new VoiceAssistantFactory(*visletManager);
-	}
+}
 
 extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
-	{
+{
 	delete factory;
-	}
+}
 
 /******************************************
 Static elements of class VoiceAssistant:
 ******************************************/
-VoiceAssistantFactory* VoiceAssistant::factory=0;
+VoiceAssistantFactory* VoiceAssistant::factory = 0;
 
 }
 

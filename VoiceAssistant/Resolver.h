@@ -24,7 +24,8 @@ guess one, per DEPENDENCIES.md's own §12 lesson).
 #ifndef VOICEASSISTANT_RESOLVER_INCLUDED
 #define VOICEASSISTANT_RESOLVER_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare Resolver (../guide/RECODE_CHECKLIST.md item 9).
 

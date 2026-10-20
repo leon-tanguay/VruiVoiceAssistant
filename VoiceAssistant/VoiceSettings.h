@@ -11,7 +11,8 @@ tier depends on it, so it needs to exist before Json.cpp will link.
 
 #include <string>
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare VoiceSettings (see v1's VoiceAssistant/VoiceSettings.h for
 // the full list of knobs: wake phrase, audio input, Vosk, Ollama, TTS,

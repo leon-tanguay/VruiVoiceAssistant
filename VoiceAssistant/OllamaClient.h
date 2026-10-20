@@ -24,7 +24,8 @@ a "v1 did this wrong" fix like the pipe/JSON issues elsewhere.
 #ifndef VOICEASSISTANT_OLLAMACLIENT_INCLUDED
 #define VOICEASSISTANT_OLLAMACLIENT_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare OllamaClient (../guide/RECODE_CHECKLIST.md item 7).
 

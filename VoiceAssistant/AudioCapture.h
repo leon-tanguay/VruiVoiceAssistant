@@ -7,7 +7,8 @@ supposed to do and what's wrong with v1's version).
 #ifndef VOICEASSISTANT_AUDIOCAPTURE_INCLUDED
 #define VOICEASSISTANT_AUDIOCAPTURE_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare AudioCapture (../guide/RECODE_CHECKLIST.md item 5).
 

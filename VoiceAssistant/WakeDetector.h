@@ -7,7 +7,8 @@ supposed to do and what's wrong with v1's version).
 #ifndef VOICEASSISTANT_WAKEDETECTOR_INCLUDED
 #define VOICEASSISTANT_WAKEDETECTOR_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare WakeDetector (../guide/RECODE_CHECKLIST.md item 3).
 

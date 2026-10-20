@@ -55,7 +55,8 @@ and the checklist file count once you've made that call.
 #ifndef VOICEASSISTANT_JSON_INCLUDED
 #define VOICEASSISTANT_JSON_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare Json (../guide/RECODE_CHECKLIST.md item 1).
 

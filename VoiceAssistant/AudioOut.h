@@ -19,7 +19,8 @@ in-memory synthesized/streamed audio); pa_simple does.
 #ifndef VOICEASSISTANT_AUDIOOUT_INCLUDED
 #define VOICEASSISTANT_AUDIOOUT_INCLUDED
 
-namespace VoiceAsst {
+namespace VoiceAsst
+{
 
 // TODO: declare AudioOut (../guide/RECODE_CHECKLIST.md item 2).
 

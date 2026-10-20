@@ -16,7 +16,8 @@ once instead of twice.
 #ifndef VRUI_TOOLS_VOICEASSISTANTNUMBERTOOL_INCLUDED
 #define VRUI_TOOLS_VOICEASSISTANTNUMBERTOOL_INCLUDED
 
-namespace Vrui {
+namespace Vrui
+{
 
 // TODO: declare VoiceAssistantNumberTool (../guide/RECODE_CHECKLIST.md item 13).
 

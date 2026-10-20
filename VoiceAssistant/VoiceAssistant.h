@@ -211,18 +211,25 @@ namespace Vislets
 
 class VoiceAssistantFactory;
 
-
-class VoiceAssistant:public Vislet
-	{
+class VoiceAssistant : public Vislet
+{
 	friend class VoiceAssistantFactory;
 
 	/* Embedded classes: */
 	public:
-	enum AssistantState { Warmup, Idle, Listening, Thinking, Speaking, Error };
+	enum AssistantState
+	{
+		Warmup,
+		Idle,
+		Listening,
+		Thinking,
+		Speaking,
+		Error
+	};
 
 	// Classes for activated voice assistant tool
-	class VoiceAssistantToolFactory:public ToolFactory
-		{
+	class VoiceAssistantToolFactory : public ToolFactory
+	{
 		friend class VoiceAssistantTool;
 		friend class VoiceAssistant;
 
@@ -232,7 +239,7 @@ class VoiceAssistant:public Vislet
 
 		/* Constructors and destructors: */
 		public:
-		VoiceAssistantToolFactory(ToolManager& toolManager,VoiceAssistant* sVoiceAssistant);
+		VoiceAssistantToolFactory(ToolManager& toolManager, VoiceAssistant* sVoiceAssistant);
 		virtual ~VoiceAssistantToolFactory(void);
 
 		/* Methods from ToolFactory: */
@@ -240,10 +247,10 @@ class VoiceAssistant:public Vislet
 		virtual const char* getButtonFunction(int buttonSlotIndex) const;
 		virtual Tool* createTool(const ToolInputAssignment& inputAssignment) const;
 		virtual void destroyTool(Tool* tool) const;
-		};
+	};
 
-	class VoiceAssistantTool:public UtilityTool
-		{
+	class VoiceAssistantTool : public UtilityTool
+	{
 		friend class VoiceAssistantToolFactory;
 		friend class VoiceAssistant;
 
@@ -253,16 +260,15 @@ class VoiceAssistant:public Vislet
 
 		/* Constructors and destructors: */
 		public:
-		VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment);
+		VoiceAssistantTool(const ToolFactory* factory, const ToolInputAssignment& inputAssignment);
 
 		/* Methods from Tool: */
 		virtual const ToolFactory* getFactory(void) const;
-		virtual void buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData);
-		};
+		virtual void buttonCallback(int buttonSlotIndex, InputDevice::ButtonCallbackData* cbData);
+	};
 
 	/* Elements: */
 	private:
-
 	class HaloNode; // Scene graph node rendering the halo
 	Misc::Autopointer<HaloNode> haloNode; // The halo node while it is in the physical scene graph
 
@@ -273,13 +279,13 @@ class VoiceAssistant:public Vislet
 	double userFinishedSpeakingTime;
 
 	/* Private methods: */
-	static void testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
-	static void voiceAssistantPressCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
-	static void voiceAssistantReleaseCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
+	static void testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
+	static void voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
+	static void voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 
 	/* Constructors and destructors: */
 	public:
-	VoiceAssistant(int numArguments,const char* const arguments[]);
+	VoiceAssistant(int numArguments, const char* const arguments[]);
 	virtual ~VoiceAssistant(void);
 
 	/* Methods from Vislet: */
@@ -290,10 +296,10 @@ class VoiceAssistant:public Vislet
 
 	/* Methods: */
 	void applyState(AssistantState newState);
-	};
+};
 
-class VoiceAssistantFactory:public VisletFactory
-	{
+class VoiceAssistantFactory : public VisletFactory
+{
 	friend class VoiceAssistant;
 
 	/* Elements: */
@@ -304,14 +310,14 @@ class VoiceAssistantFactory:public VisletFactory
 	Scalar haloPulseSpeed; // How fast the glow pulses, in cycles per second, 0 = steady
 
 	/* Constructors and destructors: */
-  	public:
+	public:
 	VoiceAssistantFactory(VisletManager& visletManager);
 	virtual ~VoiceAssistantFactory(void);
 
- 	/* Methods from VisletFactory: */
-	virtual Vislet* createVislet(int numArguments,const char* const arguments[]) const;
+	/* Methods from VisletFactory: */
+	virtual Vislet* createVislet(int numArguments, const char* const arguments[]) const;
 	virtual void destroyVislet(Vislet* vislet) const;
-	};
+};
 
 }
 
