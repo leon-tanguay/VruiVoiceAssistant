@@ -91,7 +91,7 @@ GLColor<GLfloat, 4> getStateColor(VoiceAssistant::AssistantState state)
 		case VoiceAssistant::Warmup:
 			return GLColor<GLfloat, 4>(0.9f, 0.9f, 0.95f); // Dim grey: powering up
 		case VoiceAssistant::Idle:
-			return GLColor<GLfloat, 4>(0.3f, 0.5f, 0.6f); // Muted cyan-grey: resting
+			return GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f); // Muted cyan-grey: resting
 		case VoiceAssistant::Listening:
 			return GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f); // Yellow: actively listening
 		case VoiceAssistant::Thinking:
@@ -154,19 +154,19 @@ const char* VoiceAssistant::HaloNode::getClassName(void) const
 
 void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderState) const
 {
+	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
 	// Don't draw anything in idle state
-	if (voiceAssistant->state == VoiceAssistant::Idle) return;
+	if (voiceAssistant->state == VoiceAssistant::Idle && elapsed > voiceAssistant->factory->stateTransitionDuration) return;
 
 	// Number of bands in custom gradient, more bands = smoother gradient, but more expensive to render
 	const int numBands = 24;
 	const Scalar minPulse = 0.4; // How dim the glow gets at its minimum, 0=off, 1=always full brightness
 
-	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
 	const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * voiceAssistant->factory->haloPulseSpeed); // Oscillates between 0 and 1, one full cycle every 1/haloPulseSpeed seconds
 	const Scalar pulse = minPulse + (1 - minPulse) * wave;
-	const Scalar opacity = pulse * voiceAssistant->factory->haloMaxAlpha;
 
-	GLColor<GLfloat, 4> color = getStateColor(voiceAssistant->state);
+	GLColor<GLfloat, 4> color = voiceAssistant->getHaloColor(getApplicationTime());
+	const Scalar opacity = pulse * voiceAssistant->factory->haloMaxAlpha * color[3];
 
 	// Get screen size and orientation
 	const DisplayState& displayState = getDisplayState(renderState.contextData);
@@ -294,8 +294,10 @@ void VoiceAssistant::VoiceAssistantTool::buttonCallback(int buttonSlotIndex, Inp
 /*************************************
 Methods of class VoiceAssistant:
 *************************************/
+
 VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) :
-	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0)
+	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
+	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f))
 {
 }
 
@@ -348,6 +350,53 @@ void VoiceAssistant::disable(bool shutdown)
 	getSceneGraphManager()->removePhysicalNode(*haloNode);
 }
 
+GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
+{
+	// Get the base color for the current state
+	GLColor<GLfloat, 4> targetColor = getStateColor(state);
+
+	GLColor<GLfloat, 4> oldColorCopy = transitionStartColor; // Make a copy of the transition start color to use for transition calculations
+	GLColor<GLfloat, 4> targetColorCopy = targetColor; // Make a copy of the target color to use for transition calculations
+
+	if (oldColorCopy[3] == 0.0f)
+	{
+		// If the transition start color is idle, set its color values to target
+		oldColorCopy[0] = targetColorCopy[0];
+		oldColorCopy[1] = targetColorCopy[1];
+		oldColorCopy[2] = targetColorCopy[2];
+	}
+
+	else if (targetColorCopy[3] == 0.0f)
+	{
+		// If the target color is idle, set its color values to the transition start color
+		targetColorCopy[0] = oldColorCopy[0];
+		targetColorCopy[1] = oldColorCopy[1];
+		targetColorCopy[2] = oldColorCopy[2];
+	}
+
+	// If we're in a transition, interpolate between the transition start color and the base color
+	if (time - stateStartTime < factory->stateTransitionDuration)
+	{
+		double t = (time - stateStartTime) / factory->stateTransitionDuration;
+		t = t * t * (3 - 2 * t); // Smoothstep interpolation
+
+		targetColorCopy[0] = static_cast<GLfloat>(oldColorCopy[0] + t * (targetColorCopy[0] - oldColorCopy[0]));
+		targetColorCopy[1] = static_cast<GLfloat>(oldColorCopy[1] + t * (targetColorCopy[1] - oldColorCopy[1]));
+		targetColorCopy[2] = static_cast<GLfloat>(oldColorCopy[2] + t * (targetColorCopy[2] - oldColorCopy[2]));
+		targetColorCopy[3] = static_cast<GLfloat>(oldColorCopy[3] + t * (targetColorCopy[3] - oldColorCopy[3]));
+	}
+
+	// Fade out the glow after the user stops speaking, if we're in the Speaking state
+	Scalar fade = 1.0;
+	if (state == VoiceAssistant::Listening && !userIsSpeaking)
+	{
+		fade = Math::max(0.0, Math::min(1.0, 1 - (getApplicationTime() - userFinishedSpeakingTime) / factory->listeningBufferDuration));
+	}
+	targetColorCopy[3] *= static_cast<GLfloat>(fade);
+
+	return targetColorCopy;
+}
+
 void VoiceAssistant::frame(void)
 {
 	double elapsed = getApplicationTime() - stateStartTime;
@@ -359,8 +408,6 @@ void VoiceAssistant::frame(void)
 	const double warmupDuration = 3;
 	if (state == Warmup && elapsed >= warmupDuration) applyState(Idle);
 
-	// Give user a bit more time to talk after lifting the button
-	const double listeningBufferDuration = .3;
 	const double thinkingDuration = 3; // Seconds before Thinking auto-advances to Speaking
 	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
 
@@ -374,7 +421,7 @@ void VoiceAssistant::frame(void)
 	if (state == Listening && !userIsSpeaking)
 	{
 		double elaspedSinceUserFinishedSpeaking = getApplicationTime() - userFinishedSpeakingTime;
-		if (elaspedSinceUserFinishedSpeaking >= listeningBufferDuration) applyState(Thinking);
+		if (elaspedSinceUserFinishedSpeaking >= factory->listeningBufferDuration) applyState(Thinking);
 	}
 	else if (state == Thinking && elapsed >= thinkingDuration)
 		applyState(Speaking);
@@ -382,17 +429,19 @@ void VoiceAssistant::frame(void)
 		applyState(Idle);
 
 	// Update drawing (scheduled to next visual frame, can be configured)
-	if (state != Idle)
+	if (state != Idle || elapsed < factory->stateTransitionDuration)
+	{
 		scheduleUpdate(getNextAnimationTime());
+	}
 }
 
 void VoiceAssistant::applyState(AssistantState newState)
 {
 	if (state != newState)
 	{
+		transitionStartColor = getHaloColor(getApplicationTime());
 		state = newState;
 		stateStartTime = getApplicationTime();
-
 		// Use Vrui message logger to log state change without need for std::string
 		Misc::formattedConsoleNote("VoiceAssistant: state changed to %s", getStateName(state));
 	}
@@ -456,7 +505,8 @@ Methods of class VoiceAssistantFactory:
 
 VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	VisletFactory("VoiceAssistant", visletManager),
-	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0)
+	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
+	listeningBufferDuration(0.8), stateTransitionDuration(0.5)
 {
 	VoiceAssistant::factory = this;
 

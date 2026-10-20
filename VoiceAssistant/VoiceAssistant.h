@@ -199,8 +199,11 @@ class VoiceAssistant : public Vislet
 	double stateStartTime;
 	bool userIsSpeaking;
 	double userFinishedSpeakingTime;
+	GLColor<GLfloat, 4> transitionStartColor;
 
 	/* Private methods: */
+	private:
+	GLColor<GLfloat, 4> getHaloColor(double time) const; // Returns the current halo color, including any transition fade
 	static void testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
@@ -230,6 +233,8 @@ class VoiceAssistantFactory : public VisletFactory
 	Scalar haloMaxAlpha; // Glow strength at the screen edge, 0..1 (alpha; with additive blending, acts as brightness)
 	Scalar haloFalloff; // Exponent of the alpha fade from edge inward; 1=linear, >1 = tighter
 	Scalar haloPulseSpeed; // How fast the glow pulses, in cycles per second, 0 = steady
+	double listeningBufferDuration; // How long to keep the glow on after the user stops speaking, in seconds
+	double stateTransitionDuration; // How long to fade between states, in seconds
 
 	/* Constructors and destructors: */
 	public:
