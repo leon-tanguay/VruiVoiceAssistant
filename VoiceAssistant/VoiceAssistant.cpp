@@ -1,10 +1,10 @@
 /***********************************************************************
 VoiceAssistant - See VoiceAssistant.h.
 ***********************************************************************/
-//TRY RENDERING AS GLOW ON EDGES OF FRONT PLANE
-// rectangle vignette style object
-//USE SCENE GRAPH ARCHITECTURE, AND INSERT INTO SCENE GRAPH
-// find rectange that fits the front planes of the viewer
+// TRY RENDERING AS GLOW ON EDGES OF FRONT PLANE
+// Rectangle vignette style object
+// USE SCENE GRAPH ARCHITECTURE, AND INSERT INTO SCENE GRAPH
+// Find rectangle that fits the front planes of the viewer
 // Put something in 3d space consistently for both eyes, and in front of the user, and at a consistent size
 // -setConfig "Window/panningViewport=false"
 // -vruiVerbose
@@ -12,44 +12,134 @@ VoiceAssistant - See VoiceAssistant.h.
 
 // VRui now contains centralized audio
 // SoundContext Class - 2 methods : registers recording callback or removes them
-// auto starts and stops audio recording and playback
-// add or remove the callback to the sound context, and it will be called when audio is available
-// set default for how far into the screen the gradient goes
-// all configurable
-// look at some of vislets for how configuration works
-// there is well configured space already in vrui on where vislet configs go
-// vosk chunk of audio straight from vrui w translator function
+// Auto starts and stops audio recording and playback
+// Add or remove the callback to the sound context, and it will be called when audio is available
+// Set default for how far into the screen the gradient goes
+// All configurable
+// Look at some of vislets for how configuration works
+// There is well configured space already in Vrui on where vislet configs go
+// Vosk chunk of audio straight from Vrui w translator function
 
 // VISLETS HAVE ISACTIVE METHOD
-// vislet config usuaslly associated with factory for vislet
-// in vislet factory constructor - point me at config place and read the instructionf from thre
-// look at device renderer vislet as example
-// cave renderer (on vrui github) - has more config data
-// factory has factory defualt config and the n the tool can override it
+// Vislet config usually associated with factory for vislet
+// In vislet factory constructor - point me at config place and read the instructions from there
+// Look at device renderer vislet as example
+// Cave renderer (on Vrui github) - has more config data
+// Factory has factory default config and then the tool can override it
 
 #include "VoiceAssistant.h"
 
 #include <string>
 
 #include <GL/gl.h>
-#include <GL/GLGeometryWrappers.h>
 #include <GL/GLColorTemplates.h>
+#include <GL/GLGeometryWrappers.h>
+#include <GL/GLTransformationWrappers.h>
 
 #include <Math/Math.h>
+#include <Math/Constants.h>
 
 #include <Misc/CommandDispatcher.h>
+#include <Misc/ConfigurationFile.h>
 #include <Misc/MessageLogger.h>
+#include <Misc/StandardValueCoders.h>
 
+#include <SceneGraph/GLRenderState.h>
 #include <SceneGraph/GraphNode.h>
 
+#include <Vrui/DisplayState.h>
 #include <Vrui/SceneGraphManager.h>
 #include <Vrui/ToolManager.h>
-#include <Vrui/Vrui.h>
 #include <Vrui/VisletManager.h>
+#include <Vrui/VRScreen.h>
+#include <Vrui/Vrui.h>
+#include <Vrui/VRWindow.h>
 
 namespace Vrui {
 
 namespace Vislets {
+
+
+/*************************************
+Used for the halo glow on the edges of the screen
+*************************************/
+typedef Geometry::Point<Scalar,2> Point2;   // A point on the screen plane, in screen coordinates
+typedef Geometry::Vector<Scalar,2> Vector2; // A direction on the screen plane
+
+struct ScreenCorner
+	{
+	Point2 position; // Position of the corner in screen coordinates
+	Vector2 inward;  // Direction from the corner toward the center of the screen, in screen coordinates
+
+	ScreenCorner(const Point2& sPosition, const Vector2& sInward)
+		:position(sPosition), inward(sInward)
+		{
+		}
+	};
+
+/*************************************
+Local functions of the c++ file
+*************************************/
+
+const char* getStateName(VoiceAssistant::AssistantState state)
+	{
+	switch(state)
+		{
+		case VoiceAssistant::Warmup:
+			return "Warmup";
+		case VoiceAssistant::Idle:
+			return "Idle";
+		case VoiceAssistant::Listening:
+			return "Listening";
+		case VoiceAssistant::Thinking:
+			return "Thinking";
+		case VoiceAssistant::Speaking:
+			return "Speaking";
+		case VoiceAssistant::Error:
+			return "Error";
+		}
+	return "Unknown";
+	}
+
+// Local function to this cpp file
+GLColor<GLfloat,4> getStateColor(VoiceAssistant::AssistantState state)
+	{
+	switch(state)
+		{
+		case VoiceAssistant::Warmup:
+			return GLColor<GLfloat,4>(0.9f,0.9f,0.95f); // Dim grey: powering up
+		case VoiceAssistant::Idle:
+			return GLColor<GLfloat,4>(0.3f,0.5f,0.6f); // Muted cyan-grey: resting
+		case VoiceAssistant::Listening:
+			return GLColor<GLfloat,4>(1.0f,0.9f,0.2f); // Yellow: actively listening
+		case VoiceAssistant::Thinking:
+			return GLColor<GLfloat,4>(0.3f,0.5f,1.0f); // Blue: processing
+		case VoiceAssistant::Speaking:
+			return GLColor<GLfloat,4>(0.2f,1.0f,0.4f); // Green: responding
+		case VoiceAssistant::Error:
+			return GLColor<GLfloat,4>(1.0f,0.05f,0.05f); // Intense red: error
+		}
+	return GLColor<GLfloat,4>(1.0f,1.0f,1.0f); // Unreachable if every case handled, keeps compiler happy
+	}
+
+void drawEdgeGlow(const GLColor<GLfloat,4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, const int numBands, const Scalar& opacity)
+	{
+	glBegin(GL_QUAD_STRIP);
+	for(int i=0;i<=numBands;++i)
+		{
+		Scalar inwardFraction = Scalar(i)/Scalar(numBands); // How far into halo we are, 0=at edge, 1=at inner edge of halo
+		Scalar inwardDistance = inwardFraction*haloWidth; // How far into the screen we are, in screen coordinates
+
+		Scalar alpha = Math::pow(1.0 - inwardFraction, haloFalloff) * opacity; // How strong the glow is, 0=transparent, 1=full
+		GLColor<GLfloat,4> bandColor(color[0],color[1],color[2],GLfloat(alpha)); // Cast alpha as GLFloat to avoid compiler warning about narrowing conversion
+		glColor(bandColor);
+
+		glVertex(startCorner.position+startCorner.inward*inwardDistance);
+		glVertex(endCorner.position+endCorner.inward*inwardDistance);
+		}
+	glEnd();
+	}
+
 
 /*******************************************
 Definition of class VoiceAssistant::HaloNode:
@@ -84,6 +174,67 @@ const char* VoiceAssistant::HaloNode::getClassName(void) const
 void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderState) const
 	{
 
+	// Don't draw anything in idle state
+	if (voiceAssistant->state==VoiceAssistant::Idle) return; // Don't draw anything in idle state
+
+	// Number of bands in custom gradient, more bands = smoother gradient, but more expensive to render
+	const int numBands=24;
+	const Scalar minPulse=0.4; // How dim the glow gets at its minimum, 0=off, 1=always full brightness
+
+
+	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
+	const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * voiceAssistant->factory->haloPulseSpeed); // Oscillates between 0 and 1, with a period of 2*haloPulseSpeed seconds
+	const Scalar pulse = minPulse + (1 - minPulse) * wave;
+	const Scalar opacity = pulse * voiceAssistant->factory->haloMaxAlpha;
+
+	GLColor<GLfloat,4> color = getStateColor(voiceAssistant->state);
+
+	// Get screen size and orientation
+	const DisplayState& displayState = getDisplayState(renderState.contextData);
+	const VRScreen* screen = displayState.screen;
+	const Scalar screenWidth = screen->getWidth();
+	const Scalar screenHeight = screen->getHeight();
+	const VRWindow* window = displayState.window;
+	const Scalar* panRect = window->getPanRect();
+
+	const Scalar visibleLeft = panRect[0] * screenWidth;
+	const Scalar visibleRight = panRect[1] * screenWidth;
+	const Scalar visibleBottom = panRect[2] * screenHeight;
+	const Scalar visibleTop = panRect[3] * screenHeight;
+
+	const Scalar haloWidth = Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom) * voiceAssistant->factory->haloThickness;
+
+
+	// Render state setup
+	renderState.disableMaterials();
+	renderState.disableTextures();
+	renderState.disableCulling();
+	renderState.blendFunc(GL_SRC_ALPHA,GL_ONE);
+	renderState.uploadModelview();
+
+	glPushMatrix();
+	const ONTransform screenTransform = screen->getScreenTransformation();
+	glMultMatrix(screenTransform);
+
+	// Create 4 corner objects
+	const ScreenCorner bottomLeft(Point2(visibleLeft,visibleBottom),Vector2(1,1));
+	const ScreenCorner bottomRight(Point2(visibleRight,visibleBottom),Vector2(-1,1));
+	const ScreenCorner topRight(Point2(visibleRight,visibleTop),Vector2(-1,-1));
+	const ScreenCorner topLeft(Point2(visibleLeft,visibleTop),Vector2(1,-1));
+
+	// Left edge
+	drawEdgeGlow(color, bottomLeft, topLeft, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+
+	// Right edge
+	drawEdgeGlow(color, bottomRight, topRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+
+	// Top edge
+	drawEdgeGlow(color, topLeft, topRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+
+	// Bottom edge
+	drawEdgeGlow(color, bottomLeft, bottomRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+
+	glPopMatrix();
 	}
 
 /*******************************************
@@ -152,7 +303,7 @@ void VoiceAssistant::VoiceAssistantTool::buttonCallback(int buttonSlotIndex,Inpu
 	if(cbData->newButtonState)
 		{
 		const char command[] = "voiceAssistant.press";
-    	// No need to include string.h because sizeof minus one is known at compile time
+		// No need to include string.h because sizeof minus one is known at compile time
 		Vrui::getCommandDispatcher().dispatchCommand(command,command+sizeof(command)-1);
 		}
 	else
@@ -181,9 +332,9 @@ VisletFactory* VoiceAssistant::getFactory(void) const
 
 void VoiceAssistant::enable(bool startup)
 	{
-	//Implement to actually use the startup command line arg
-	//Startup is only true on the first enable call
-	//Remove the command Callbacks when vislet disabled
+	// Implement to actually use the startup command line arg
+	// Startup is only true on the first enable call
+	// Remove the command callbacks when vislet disabled
 
 	// SOLUTION - if enabled or disabled in the callbacks, then have them just print to the console that it is inactive
 
@@ -193,21 +344,21 @@ void VoiceAssistant::enable(bool startup)
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test",&VoiceAssistant::testCommandCallback,this,
 		"<stateName>","Switches the orb to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
 
-	// 0s here serve as null pointer for userData, since the callbacks don't need it
+	// The 0s here are the argument descriptions: these commands take no arguments ('this' is the userData)
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press",&VoiceAssistant::voiceAssistantPressCallback,this,0,
 		"Begin a voice assistant request (simulate pressing the button)");
 
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release",&VoiceAssistant::voiceAssistantReleaseCallback,this,0,
 		"Release a voice assistant request (simulate releasing the button)");
 
-	//Add tool
+	// Add tool
 	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(),this),
 		Vrui::ToolManager::defaultToolFactoryDestructor);
 
-	//start on warmup
+	// Start on warmup
 	applyState(Warmup);
 
-	//add node to scene graph
+	// Add node to scene graph
 	getSceneGraphManager()->addPhysicalNode(*haloNode);
 	}
 
@@ -232,10 +383,10 @@ void VoiceAssistant::frame(void)
 	const double warmupDuration = 3;
 	if(state==Warmup && elapsed>=warmupDuration) applyState(Idle);
 
-	//Give user a bit more time to talk after lifting the button
+	// Give user a bit more time to talk after lifting the button
 	const double listeningBufferDuration = .3;
-	const double thinkingDuration = 3; // seconds before Thinking auto-advances to Speaking
-	const double speakingDuration = 3; // seconds before Speaking auto-advances to Idle
+	const double thinkingDuration = 3; // Seconds before Thinking auto-advances to Speaking
+	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
 
 	// If not listening user not speaking, reset the userIsSpeaking flag
 	if(state!=Listening && userIsSpeaking)
@@ -257,50 +408,6 @@ void VoiceAssistant::frame(void)
 		scheduleUpdate(getNextAnimationTime());
 	}
 
-// Local function to this cpp file for debugging or informational purposes:
-// returns a string representation of the AssistantState enum
-
-const char* getStateName(VoiceAssistant::AssistantState state)
-	{
-	switch(state)
-		{
-		case VoiceAssistant::Warmup:
-			return "Warmup";
-		case VoiceAssistant::Idle:
-			return "Idle";
-		case VoiceAssistant::Listening:
-			return "Listening";
-		case VoiceAssistant::Thinking:
-			return "Thinking";
-		case VoiceAssistant::Speaking:
-			return "Speaking";
-		case VoiceAssistant::Error:
-			return "Error";
-		}
-	return "Unknown";
-	}
-
-// Local function to this cpp file
-GLColor<GLfloat,4> getStateColor(VoiceAssistant::AssistantState state)
-	{
-	switch(state)
-		{
-		case VoiceAssistant::Warmup:
-			return GLColor<GLfloat,4>(0.9f,0.9f,0.95f); // dim grey: powering up
-		case VoiceAssistant::Idle:
-			return GLColor<GLfloat,4>(0.3f,0.5f,0.6f); // muted cyan-grey: resting
-		case VoiceAssistant::Listening:
-			return GLColor<GLfloat,4>(1.0f,0.9f,0.2f); // yellow: actively listening
-		case VoiceAssistant::Thinking:
-			return GLColor<GLfloat,4>(0.3f,0.5f,1.0f); // blue: processing
-		case VoiceAssistant::Speaking:
-			return GLColor<GLfloat,4>(0.2f,1.0f,0.4f); // green: responding
-		case VoiceAssistant::Error:
-			return GLColor<GLfloat,4>(1.0f,0.05f,0.05f); // intense red: error
-		}
-	return GLColor<GLfloat,4>(1.0f,1.0f,1.0f); // unreachable if every case handled, keeps compiler happy
-	}
-
 void VoiceAssistant::applyState(AssistantState newState)
 	{
 	if(state != newState)
@@ -315,7 +422,7 @@ void VoiceAssistant::applyState(AssistantState newState)
 
 // Console command to test state changes, for debugging or demonstration purposes
 // Called in console via "voiceAssistant.test <stateName>"
-// Syntax uses the state names defined in the OrbState enum or letters
+// Syntax uses the state names defined in the AssistantState enum or letters
 void VoiceAssistant::testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
 	{
 	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
@@ -343,7 +450,7 @@ void VoiceAssistant::testCommandCallback(const char* argumentBegin,const char* a
 	thisPtr->applyState(newState);
 	}
 
-//Called by saying voiceAssistant.press
+// Called by saying voiceAssistant.press
 void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
 	{
 	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
@@ -351,7 +458,7 @@ void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin,const
 	thisPtr->userIsSpeaking = true;
 	}
 
-//Called by saying voiceAssistant.release
+// Called by saying voiceAssistant.release
 void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin,const char* argumentEnd,void* userData)
 	{
 	VoiceAssistant* thisPtr=static_cast<VoiceAssistant*>(userData);
@@ -370,9 +477,16 @@ Methods of class VoiceAssistantFactory:
 *************************************/
 
 VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager)
-	:VisletFactory("VoiceAssistant",visletManager)
+	:VisletFactory("VoiceAssistant",visletManager),
+	haloThickness(0.08),haloMaxAlpha(0.8),haloFalloff(2.0),haloPulseSpeed(1.0)
 	{
 	VoiceAssistant::factory=this;
+
+	Misc::ConfigurationFileSection cfs=visletManager.getVisletClassSection(getClassName());
+	cfs.updateValue("./haloThickness",haloThickness);
+	cfs.updateValue("./haloMaxAlpha",haloMaxAlpha);
+	cfs.updateValue("./haloFalloff",haloFalloff);
+	cfs.updateValue("./haloPulseSpeed",haloPulseSpeed);
 	}
 
 VoiceAssistantFactory::~VoiceAssistantFactory(void)

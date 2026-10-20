@@ -296,15 +296,22 @@ class VoiceAssistantFactory:public VisletFactory
 	{
 	friend class VoiceAssistant;
 
-  	/* Constructors and destructors: */
-  	public:
- 	VoiceAssistantFactory(VisletManager& visletManager);
-  	virtual ~VoiceAssistantFactory(void);
+	/* Elements: */
+	private:
+	Scalar haloThickness; // How far the glow reaches in from each edge, as a fraction of the shorter screen side (0..0.5)
+	Scalar haloMaxAlpha; // Glow strength at the screen edge, 0..1 (alpha; with additive blending, acts as brightness)
+	Scalar haloFalloff; // Exponent of the alpha fade from edge inward; 1=linear, >1 = tighter
+	Scalar haloPulseSpeed; // How fast the glow pulses, in cycles per second, 0 = steady
 
-  	/* Methods from VisletFactory: */
-  	virtual Vislet* createVislet(int numArguments,const char* const arguments[]) const;
-  	virtual void destroyVislet(Vislet* vislet) const;
-  	};
+	/* Constructors and destructors: */
+  	public:
+	VoiceAssistantFactory(VisletManager& visletManager);
+	virtual ~VoiceAssistantFactory(void);
+
+ 	/* Methods from VisletFactory: */
+	virtual Vislet* createVislet(int numArguments,const char* const arguments[]) const;
+	virtual void destroyVislet(Vislet* vislet) const;
+	};
 
 }
 
