@@ -3,14 +3,16 @@
 #
 # This is a standalone Vrui add-on, modeled on the Kinect 3D Video
 # Capture Project -- same pattern as v1's makefile. It builds two Vrui
-# plug-ins -- a vislet (the assistant brain + on-screen orb) and two
-# input tools (push-to-talk) -- against an *installed* Vrui, and `make
+# plug-ins -- a vislet (the assistant brain + halo, with the command-mode
+# push-to-talk tool embedded in it and registered from its enable()) and
+# the number-dictation tool -- against an *installed* Vrui, and `make
 # install` drops them, plus the assistant's small runtime assets, into
 # that existing Vrui installation. The Vrui source tree is never touched.
 #
-# Quick build:
-#   make VRUI_MAKEDIR=/usr/local/share/Vrui-15.0/make -j$(nproc)
-#   sudo make VRUI_MAKEDIR=/usr/local/share/Vrui-15.0/make install
+# Quick build (plain make FIRST, so install never builds as root; -j2
+# because full parallelism freezes this machine):
+#   make -j2
+#   sudo make install
 #
 # Changes from v1, and why (see ../vrui-assistant-v2/DEPENDENCIES.md):
 #   - VRUI_MAKEDIR is validated instead of trusted (this box has both
@@ -119,10 +121,9 @@ PROJECT_VISLETDIR = $(PROJECT_ROOT)/$(PLUGINDIR)/$(VRVISLETSDIREXT)
 PROJECT_TOOLDIR   = $(PROJECT_ROOT)/$(PLUGINDIR)/$(VRTOOLSDIREXT)
 
 VISLET     := $(PROJECT_VISLETDIR)/libVoiceAssistant.$(PLUGINFILEEXT)
-TOOL       := $(PROJECT_TOOLDIR)/libVoiceAssistantTool.$(PLUGINFILEEXT)
 NUMBERTOOL := $(PROJECT_TOOLDIR)/libVoiceAssistantNumberTool.$(PLUGINFILEEXT)
 
-ALL = $(VISLET) $(TOOL) $(NUMBERTOOL)
+ALL = $(VISLET) $(NUMBERTOOL)
 
 .PHONY: all
 all: $(ALL)
@@ -187,15 +188,17 @@ include $(VRUI_MAKEDIR)/BasicMakefile
 
 # C++ sources making up the self-contained vislet "brain". Discovered by
 # wildcard rather than hand-listed: drop a new .cpp into VoiceAssistant/
-# and it is picked up automatically, EXCEPT the two tool sources, which
-# are their own separate plug-in targets below and must not be linked
-# into the vislet as well.
+# and it is picked up automatically, EXCEPT the number-dictation tool,
+# which is its own separate plug-in target below and must not be linked
+# into the vislet as well. (The command-mode push-to-talk tool used to be
+# a separate VoiceAssistantTool.cpp plug-in too; it now lives inside
+# VoiceAssistant.cpp, so it builds as part of the vislet.)
 VOICEASSISTANT_SOURCES := $(filter-out \
-  $(PROJECT_SRCDIR)/VoiceAssistantTool.cpp $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp, \
+  $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp, \
   $(wildcard $(PROJECT_SRCDIR)/*.cpp))
 
 # Make all plug-in objects depend on the generated configuration (Config.h):
-$(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES) $(PROJECT_SRCDIR)/VoiceAssistantTool.cpp $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp): $(CONFIGFILE)
+$(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES) $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp): $(CONFIGFILE)
 
 # Vendored libvosk: link the in-tree copy, and record rpaths to BOTH the
 # build-tree copy (so it runs uninstalled, e.g. with -dir) and the installed
@@ -204,7 +207,7 @@ VOICEASSISTANT_EXTRALIBS = -L$(VOSK_BUILDDIR) -Wl,-rpath,$(VOSK_BUILDDIR) -Wl,-r
                            -lvosk -lcurl -lespeak-ng -lpulse-simple -lpulse
 
 # Keep the PIC object files from being deleted as pattern-rule intermediates:
-.SECONDARY: $(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES) $(PROJECT_SRCDIR)/VoiceAssistantTool.cpp $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp)
+.SECONDARY: $(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES) $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp)
 
 #
 # The vislet (assistant brain + on-screen orb). Sound (mic capture), IO and
@@ -214,8 +217,11 @@ VOICEASSISTANT_EXTRALIBS = -L$(VOSK_BUILDDIR) -Wl,-rpath,$(VOSK_BUILDDIR) -Wl,-r
 # Vrui build without it, the #if SYSTEM_HAVE_OPENAL guards in the source
 # degrade gracefully rather than failing to link.
 # Target-specific PACKAGES/CFLAGS propagate to every PIC object compile.
+# MYSCENEGRAPH is for the halo, a SceneGraph::GraphNode subclass added to
+# Vrui's physical-space scene graph (Vrui's own makefile adds it the same
+# way for tools that use scene graph nodes, e.g. WalkNavigationTool).
 #
-$(VISLET): PACKAGES = MYVRUI MYGLGEOMETRY MYGLSUPPORT MYGLWRAPPERS MYGEOMETRY MYMATH MYMISC MYIO MYTHREADS MYSOUND MYALSUPPORT GL
+$(VISLET): PACKAGES = MYVRUI MYSCENEGRAPH MYGLGEOMETRY MYGLSUPPORT MYGLWRAPPERS MYGEOMETRY MYMATH MYMISC MYIO MYTHREADS MYSOUND MYALSUPPORT GL
 ifneq ($(SYSTEM_HAVE_OPENAL),0)
   $(VISLET): PACKAGES += OPENAL
 endif
@@ -224,15 +230,6 @@ $(VISLET): $(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES))
 	@mkdir -p $(PROJECT_VISLETDIR)
 	@echo Linking $@...
 	@$(CCOMP) $(PLUGINLINKFLAGS) -o $@ $^ $(PLUGINLFLAGS) $(VOICEASSISTANT_EXTRALIBS)
-
-#
-# The push-to-talk tool (command mode).
-#
-$(TOOL): PACKAGES = MYVRUI MYGLGEOMETRY MYGLSUPPORT MYGLWRAPPERS MYGEOMETRY MYMATH MYMISC GL
-$(TOOL): $(call PLUGINOBJNAMES,$(PROJECT_SRCDIR)/VoiceAssistantTool.cpp)
-	@mkdir -p $(PROJECT_TOOLDIR)
-	@echo Linking $@...
-	@$(CCOMP) $(PLUGINLINKFLAGS) -o $@ $^ $(PLUGINLFLAGS)
 
 #
 # The push-to-talk tool (number-dictation mode).
@@ -271,10 +268,13 @@ install: $(ALL)
 	@echo Installing $(PROJECT_DISPLAYNAME) into the Vrui installation...
 # Install the plug-ins into Vrui's plug-in directories:
 	@echo Installing plug-ins...
+# Remove the old standalone command-mode tool plug-in if an earlier install left
+# it behind: it registers a tool class with the same name as the one the vislet
+# now registers itself.
+	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantTool.$(PLUGINFILEEXT)
 	@install -d $(INSTALLPREFIX)$(VISLETINSTALLDIR)
 	@install $(VISLET) $(INSTALLPREFIX)$(VISLETINSTALLDIR)
 	@install -d $(INSTALLPREFIX)$(TOOLINSTALLDIR)
-	@install $(TOOL) $(INSTALLPREFIX)$(TOOLINSTALLDIR)
 	@install $(NUMBERTOOL) $(INSTALLPREFIX)$(TOOLINSTALLDIR)
 # Install the command catalog and earcon WAVs:
 	@echo Installing runtime assets...
@@ -298,6 +298,6 @@ install: $(ALL)
 uninstall:
 	@echo Uninstalling $(PROJECT_DISPLAYNAME)...
 	@rm -f $(INSTALLPREFIX)$(VISLETINSTALLDIR)/libVoiceAssistant.$(PLUGINFILEEXT)
-	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantTool.$(PLUGINFILEEXT)
+	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantTool.$(PLUGINFILEEXT) # pre-merge plug-in, if still there
 	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantNumberTool.$(PLUGINFILEEXT)
 	@rm -rf $(INSTALLPREFIX)$(SHAREINSTALLDIR)

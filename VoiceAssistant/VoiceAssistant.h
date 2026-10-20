@@ -198,12 +198,15 @@ practice with a new Vrui class, not required for correctness.
 #include <Vrui/Vislet.h>
 #include <Vrui/UtilityTool.h>
 
-class GLContextData;
+#include <Misc/Autopointer.h>
+#include <GL/GLColorTemplates.h>
 
-namespace Vrui 
+/* Forward declarations: */
+
+namespace Vrui
 {
 
-namespace Vislets 
+namespace Vislets
 {
 
 class VoiceAssistantFactory;
@@ -215,14 +218,14 @@ class VoiceAssistant:public Vislet
 
 	/* Embedded classes: */
 	public:
-	enum OrbState { Warmup, Idle, Listening, Thinking, Speaking, Error };
+	enum AssistantState { Warmup, Idle, Listening, Thinking, Speaking, Error };
 
 	// Classes for activated voice assistant tool
 	class VoiceAssistantToolFactory:public ToolFactory
 		{
 		friend class VoiceAssistantTool;
 		friend class VoiceAssistant;
-		
+
 		/* Elements: */
 		private:
 		VoiceAssistant* voiceAssistant;
@@ -243,7 +246,7 @@ class VoiceAssistant:public Vislet
 		{
 		friend class VoiceAssistantToolFactory;
 		friend class VoiceAssistant;
-		
+
 		/* Elements: */
 		private:
 		static VoiceAssistantToolFactory* factory;
@@ -251,7 +254,7 @@ class VoiceAssistant:public Vislet
 		/* Constructors and destructors: */
 		public:
 		VoiceAssistantTool(const ToolFactory* factory,const ToolInputAssignment& inputAssignment);
-		
+
 		/* Methods from Tool: */
 		virtual const ToolFactory* getFactory(void) const;
 		virtual void buttonCallback(int buttonSlotIndex,InputDevice::ButtonCallbackData* cbData);
@@ -259,20 +262,21 @@ class VoiceAssistant:public Vislet
 
 	/* Elements: */
 	private:
+
+	class HaloNode; // Scene graph node rendering the halo
+	Misc::Autopointer<HaloNode> haloNode; // The halo node while it is in the physical scene graph
+
 	static VoiceAssistantFactory* factory;
-	Point orbPosition;
-	Rotation orbOrientation;
-	OrbState state;
+	AssistantState state;
 	double stateStartTime;
 	bool userIsSpeaking;
 	double userFinishedSpeakingTime;
-	Scalar orbSize;
 
 	/* Private methods: */
 	static void testCommandCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
 	static void voiceAssistantPressCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
 	static void voiceAssistantReleaseCallback(const char* argumentBegin,const char* argumentEnd,void* userData);
-	
+
 	/* Constructors and destructors: */
 	public:
 	VoiceAssistant(int numArguments,const char* const arguments[]);
@@ -283,11 +287,9 @@ class VoiceAssistant:public Vislet
 	virtual void enable(bool startup);
 	virtual void disable(bool shutdown);
 	virtual void frame(void);
-	virtual void display(GLContextData& contextData) const;
 
 	/* Methods: */
-	void applyState(OrbState newState);
-	void setOrbSpawnAndSize(void);
+	void applyState(AssistantState newState);
 	};
 
 class VoiceAssistantFactory:public VisletFactory
