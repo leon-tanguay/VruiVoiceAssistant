@@ -8,112 +8,34 @@ dead code to delete -- see the audio comment below and
 ***********************************************************************/
 
 /***********************************************************************
-DRAWING THE ORB -- reference implementation named directly: Vrui's own
-TurnSignal vislet (~/src/vrui/Vrui/Vislets/TurnSignal.{h,cpp}). It's a
-real, shipped example of exactly this problem -- a small head-locked
-indicator giving the user feedback (which way to turn) -- and it settles
-several questions an earlier draft of this comment had to guess at.
+DRAWING THE HALO (current design, replaces the earlier orb plans):
+feedback is a glow along the edges of the user's view, coloured and
+pulsing by state. VoiceAssistant::HaloNode (defined in the .cpp) is a
+SceneGraph::GraphNode in Vrui's physical-space scene graph, drawn only in
+the transparent pass. Each call it draws around the visible part of the
+current window's screen: getDisplayState(...).screen and
+getScreenTransformation() give the screen's frame, and
+window->getPanRect() gives the part of it actually visible (on the
+desktop the window is a panning view into a wider screen; on an HMD the
+pan rect is the full screen). Look/feel settings live in
+VoiceAssistantFactory and are read from Vrui.cfg.
 
-The rule, stated plainly: never render in 2D or in screen space. It does
-not work in VR -- a flat pixel overlay is pinned to ONE window's
-rectangle, meaningless on an HMD (there is no "the screen"), and renders
-wrong in stereo (both eyes would show the identical flat image with no
-disparity). TurnSignal instead draws its arrow as a real, flat 3D object
-positioned and oriented relative to the user's head, using ordinary
-immediate-mode OpenGL -- no special "HUD" API, no glOrtho.
-
-The exact recipe, read from TurnSignal.cpp's display() (lines 251-317):
-
-    Point viewerPos=getMainViewer()->getHeadPosition();
-    Vector viewDir=getMainViewer()->getViewDirection();
-    glPushMatrix();
-    glTranslate(viewerPos-Point::origin);
-    glRotate(Rotation::fromBaseVectors(viewDir^getUpDirection(),getUpDirection()));
-    glTranslate(Scalar(0),arrowHeight,-arrowDist);   // up, then forward (OpenGL -Z)
-    glScale(arrowSize,arrowSize,arrowSize);
-    // ...draw with plain glBegin/glVertex/glColor, in this local frame...
-    glPopMatrix();
-
-Notably: **no `goToPhysicalSpace()` call.** TurnSignal's own comment labels the state
-right after the final `glPopMatrix()` as "physical coordinates" -- meaning a
-Vislet's `display()` is apparently already handed physical-space coordinates
-by Vrui's render loop (unlike an Application's own scene rendering, which is
-navigational and would need `goToPhysicalSpace(contextData)` to escape it).
-Confirmed by reading TurnSignal's actual, shipping code; not independently
-verified against Vrui's own render-loop source, so if the orb's geometry
-comes out double-transformed or misplaced, that assumption is the first
-thing to check.
-
-Piece by piece:
-- `getMainViewer()->getHeadPosition()`/`getViewDirection()`/`getUpDirection()`
-  (<Vrui/Viewer.h>) -- all physical-space, exactly as before.
-- `Rotation::fromBaseVectors(xAxis,yAxis)` (<Geometry/Rotation.h>) builds an
-  orthonormal rotation from two basis vectors -- here, "right" (view direction
-  crossed with up, `^` is Vrui's cross-product operator on Vector) as the local
-  X axis and "up" as the local Y axis. This is the toolkit's ready-made answer
-  to "build a rotation that faces this direction with this up vector" --
-  don't hand-derive a rotation matrix.
-  - CORRECTED (an earlier draft of this note guessed wrong): SAME order as
-    TurnSignal, not the other way around. Worked out by hand from
-    fromBaseVectors(viewDir^up,up) with viewDir=(0,0,-1),up=(0,1,0): local X
-    (xAxis) comes out (1,0,0), and local Z -- implied by the right-handed
-    basis, xAxis-cross-yAxis -- comes out (0,0,1), which is BEHIND the
-    viewer's view direction, i.e. back toward the viewer. TurnSignal's flat
-    arrow is drawn in the local XY plane (plain 2-argument glVertex(x,y) calls,
-    z implicitly 0), so its face normal already points at the viewer with this
-    exact call, unchanged. It only reads as "facing away" if you assume the
-    arrow lies flat on the ground -- it doesn't; it's translated up and
-    forward (0,arrowHeight,-arrowDist), a vertical card in front of you, not
-    a ground decal. Practical result: local +X is screen-right and local +Y
-    is screen-up from the viewer's standpoint, same as drawing on ordinary 2D
-    graph paper -- no mirroring to work out, no flip needed.
-- `arrowSize`/`arrowDist`/`arrowHeight` are real physical-unit constants
-  (TurnSignal.h line 46-48, defaulted via `Vrui::getInchFactor()` --
-  <Vrui/Vrui.h>, "length of an inch in Vrui physical units" -- and loaded
-  from a `Misc::ConfigurationFileSection` exactly like the settings pattern
-  already documented elsewhere in this file). The orb's size/distance/height
-  should be the same kind of named, configurable, physical-unit constants,
-  not a magic number buried in display().
-- The `(0,arrowHeight,-arrowDist)` translate happens AFTER the rotation, so
-  it moves along the NEW (rotated) axes -- forward is -Z in OpenGL's
-  convention, which is why the distance is negated.
-
-Ask your boss to confirm this matches their own convention for anything not
-explicitly nailed down above (how far in front of the head, whether the two
-orbs' corner-like arrangement should be two separate head-relative points or
-one anchor point with a local offset) -- TurnSignal answers "how do I place
-one flat thing relative to the head," not "how do I place two."
-
-CORNER-HUD VARIANT (current direction, per direct instruction): same recipe
-as above, unchanged -- head-locked, recomputed every frame, physical-space,
-no glOrtho -- just pushed toward the corner of view instead of dead-center.
-Concretely: after the same glTranslate(headPos)/glRotate(fromBaseVectors(
-right,up)), use a LARGER rightOffset and upOffset (both positive: local +X is
-screen-right, local +Y is screen-up, per the derivation above) relative to
-forwardDist, e.g. glTranslate(rightOffset,upOffset,-forwardDist), so the shape
-sits toward the top-right of the field of view rather than centered in front
-of the face like TurnSignal's arrow. Also make it visually flat/2D-styled
-(unlit glColor + glBegin/glVertex in the local XY plane, z implicit 0 -- same
-technique as TurnSignal's arrow) instead of the lit glDrawSphereIcosahedron
-ball -- a HUD icon reads better flat and unlit than as a shaded 3D sphere.
-Since this must track the CURRENT head pose every frame (that's what makes it
-read as "pinned to the corner of my view" as you look around), the position/
-orientation can no longer be computed once in enable() and held fixed --
-recompute every frame, same as TurnSignal does directly inside display().
-
-VISUAL STYLE: design the orb after Destiny's Ghost -- see
-../guide/BUILD_ORDER.md Milestone 1 for the full direction (angular shell
-plates instead of a plain ring, a single glowing "eye" carrying most of the
-expressiveness, matte-grey-plus-cyan palette vs. today's per-state colour
-scheme -- an open decision to make before writing drawOrb()'s colour logic,
-not after). Doesn't change anything about the physical-space placement
-above, only the shapes/colours drawn once placed.
+Still to check: on a real headset, whether the lenses hide the outermost
+part of the glow (fix: thicker halo, or an inset setting), and whether
+scene objects in front of the screen plane cover it (fix: glDepthRange,
+as in Vrui's MouseCursorFaker.cpp).
 ***********************************************************************/
 
 /***********************************************************************
-AUDIO -- sound should come from the orb's location, not play flat.
+AUDIO -- sound should come from the assistant's location, not play flat.
 Direct guidance: "sound output from an assistant should come from the 3D
-location of the assistant's graphical representation." This REVERSES an
+location of the assistant's graphical representation."
+
+NEW OPEN QUESTION since the orb became a halo: the halo surrounds the
+whole view, so it has no single 3D point to play sound from. Ask Oliver
+where the assistant's voice should come from now (e.g. a fixed point just
+in front of the head). The notes below were written for the orb; "the
+orb's position" means whatever point that answer gives. This REVERSES an
 earlier recommendation in this guide to delete v1's OpenAL earcon path
 as dead code -- it is not dead code to remove, it is the right design,
 currently non-functional only because this dev box's installed Vrui was
@@ -270,7 +192,7 @@ class VoiceAssistant : public Vislet
 	/* Elements: */
 	private:
 	class HaloNode; // Scene graph node rendering the halo
-	Misc::Autopointer<HaloNode> haloNode; // The halo node while it is in the physical scene graph
+	Misc::Autopointer<HaloNode> haloNode; // The halo node; added to the physical scene graph while the vislet is enabled
 
 	static VoiceAssistantFactory* factory;
 	AssistantState state;
@@ -304,7 +226,7 @@ class VoiceAssistantFactory : public VisletFactory
 
 	/* Elements: */
 	private:
-	Scalar haloThickness; // How far the glow reaches in from each edge, as a fraction of the shorter screen side (0..0.5)
+	Scalar haloThickness; // How far the glow reaches in from each edge, as a fraction of the shorter side of the visible screen area (0..0.5)
 	Scalar haloMaxAlpha; // Glow strength at the screen edge, 0..1 (alpha; with additive blending, acts as brightness)
 	Scalar haloFalloff; // Exponent of the alpha fade from edge inward; 1=linear, >1 = tighter
 	Scalar haloPulseSpeed; // How fast the glow pulses, in cycles per second, 0 = steady

@@ -1,30 +1,13 @@
 /***********************************************************************
 VoiceAssistant - See VoiceAssistant.h.
 ***********************************************************************/
-// TRY RENDERING AS GLOW ON EDGES OF FRONT PLANE
-// Rectangle vignette style object
-// USE SCENE GRAPH ARCHITECTURE, AND INSERT INTO SCENE GRAPH
-// Find rectangle that fits the front planes of the viewer
-// Put something in 3d space consistently for both eyes, and in front of the user, and at a consistent size
-// -setConfig "Window/panningViewport=false"
-// -vruiVerbose
-
-// VRui now contains centralized audio
-// SoundContext Class - 2 methods : registers recording callback or removes them
+// Open notes from Oliver:
+// Audio: Vrui now contains centralized audio
+// SoundContext class - 2 methods: registers a recording callback or removes it
 // Auto starts and stops audio recording and playback
 // Add or remove the callback to the sound context, and it will be called when audio is available
-// Set default for how far into the screen the gradient goes
-// All configurable
-// Look at some of vislets for how configuration works
-// There is well configured space already in Vrui on where vislet configs go
 // Vosk chunk of audio straight from Vrui w translator function
-
-// VISLETS HAVE ISACTIVE METHOD
-// Vislet config usually associated with factory for vislet
-// In vislet factory constructor - point me at config place and read the instructions from there
-// Look at device renderer vislet as example
-// Cave renderer (on Vrui github) - has more config data
-// Factory has factory default config and then the tool can override it
+// Config: the factory holds the defaults (done); per-instance overrides via the vislet's arguments are still to do
 
 #include "VoiceAssistant.h"
 
@@ -101,7 +84,6 @@ const char* getStateName(VoiceAssistant::AssistantState state)
 	return "Unknown";
 }
 
-// Local function to this cpp file
 GLColor<GLfloat, 4> getStateColor(VoiceAssistant::AssistantState state)
 {
 	switch (state)
@@ -131,7 +113,7 @@ void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCor
 		Scalar inwardDistance = inwardFraction * haloWidth; // How far into the screen we are, in screen coordinates
 
 		Scalar alpha = Math::pow(1.0 - inwardFraction, haloFalloff) * opacity; // How strong the glow is, 0=transparent, 1=full
-		GLColor<GLfloat, 4> bandColor(color[0], color[1], color[2], GLfloat(alpha)); // Cast alpha as GLFloat to avoid compiler warning about narrowing conversion
+		GLColor<GLfloat, 4> bandColor(color[0], color[1], color[2], GLfloat(alpha)); // Explicit narrowing: the alpha math is done in double, the colour is float
 		glColor(bandColor);
 
 		glVertex(startCorner.position + startCorner.inward * inwardDistance);
@@ -173,14 +155,14 @@ const char* VoiceAssistant::HaloNode::getClassName(void) const
 void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderState) const
 {
 	// Don't draw anything in idle state
-	if (voiceAssistant->state == VoiceAssistant::Idle) return; // Don't draw anything in idle state
+	if (voiceAssistant->state == VoiceAssistant::Idle) return;
 
 	// Number of bands in custom gradient, more bands = smoother gradient, but more expensive to render
 	const int numBands = 24;
 	const Scalar minPulse = 0.4; // How dim the glow gets at its minimum, 0=off, 1=always full brightness
 
 	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
-	const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * voiceAssistant->factory->haloPulseSpeed); // Oscillates between 0 and 1, with a period of 2*haloPulseSpeed seconds
+	const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * voiceAssistant->factory->haloPulseSpeed); // Oscillates between 0 and 1, one full cycle every 1/haloPulseSpeed seconds
 	const Scalar pulse = minPulse + (1 - minPulse) * wave;
 	const Scalar opacity = pulse * voiceAssistant->factory->haloMaxAlpha;
 
@@ -328,17 +310,15 @@ VisletFactory* VoiceAssistant::getFactory(void) const
 
 void VoiceAssistant::enable(bool startup)
 {
-	// Implement to actually use the startup command line arg
-	// Startup is only true on the first enable call
-	// Remove the command callbacks when vislet disabled
-
-	// SOLUTION - if enabled or disabled in the callbacks, then have them just print to the console that it is inactive
+	// TODO: use the startup argument (it is only true on the first enable call)
+	// TODO: the command callbacks are registered on every enable and never removed on disable.
+	// Option: keep them registered, and have them check isActive() and print that the assistant is inactive
 
 	Vislet::enable(startup);
 	Misc::consoleNote("VoiceAssistant: starting");
 
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test", &VoiceAssistant::testCommandCallback, this,
-		"<stateName>", "Switches the orb to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
+		"<stateName>", "Switches the assistant to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
 
 	// The 0s here are the argument descriptions: these commands take no arguments ('this' is the userData)
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press", &VoiceAssistant::voiceAssistantPressCallback, this, 0,
@@ -372,8 +352,8 @@ void VoiceAssistant::frame(void)
 {
 	double elapsed = getApplicationTime() - stateStartTime;
 
-	// THESE ARE FOR TESTING PURPOSES ONLY, to demonstrate state changes without needing a voice input
-	// Each press command will cycle through these states
+	// FAKE PIPELINE FOR TESTING ONLY, until the real voice pipeline exists:
+	// timers advance Warmup -> Idle, and after a press/release Listening -> Thinking -> Speaking -> Idle
 
 	// Fake loading lasts 3 seconds for now
 	const double warmupDuration = 3;
@@ -448,7 +428,7 @@ void VoiceAssistant::testCommandCallback(const char* argumentBegin, const char* 
 	thisPtr->applyState(newState);
 }
 
-// Called by saying voiceAssistant.press
+// Called by the push-to-talk tool's button press, or by typing voiceAssistant.press in the console
 void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
 {
 	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
@@ -456,7 +436,7 @@ void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, cons
 	thisPtr->userIsSpeaking = true;
 }
 
-// Called by saying voiceAssistant.release
+// Called by the push-to-talk tool's button release, or by typing voiceAssistant.release in the console
 void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
 {
 	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
