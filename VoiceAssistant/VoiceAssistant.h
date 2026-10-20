@@ -9,7 +9,7 @@ dead code to delete -- see the audio comment below and
 
 /***********************************************************************
 DRAWING THE HALO (current design, replaces the earlier orb plans):
-feedback is a glow along the edges of the user's view, coloured and
+feedback is a glow along the edges of the user's view, colored and
 pulsing by state. VoiceAssistant::HaloNode (defined in the .cpp) is a
 SceneGraph::GraphNode in Vrui's physical-space scene graph, drawn only in
 the transparent pass. Each call it draws around the visible part of the
@@ -199,6 +199,8 @@ class VoiceAssistant : public Vislet
 	Misc::Autopointer<HaloNode> haloNode; // The halo node; added to the physical scene graph while the vislet is enabled
 
 	static VoiceAssistantFactory* factory;
+	static VoiceAssistant* owner; // The one and only VoiceAssistant instance, if any, that is currently enabled (the one that owns the tool)
+
 	AssistantState state;
 	double stateStartTime;
 	bool userIsSpeaking;
@@ -211,6 +213,7 @@ class VoiceAssistant : public Vislet
 
 	/* Private methods: */
 	private:
+	GLColor<GLfloat, 4> getStateColor(VoiceAssistant::AssistantState state) const;
 	GLColor<GLfloat, 4> getHaloColor(double time) const; // Returns the current halo color, including any transition fade
 	static void testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
@@ -238,18 +241,24 @@ class VoiceAssistantFactory : public VisletFactory
 
 	/* Elements: */
 	private:
-	Scalar haloThickness; // How far the glow reaches in from each edge, as a fraction of the shorter side of the visible screen area (0..0.5)
-	Scalar haloMaxAlpha; // Glow strength at the screen edge, 0..1 (alpha; with additive blending, acts as brightness)
-	Scalar haloFalloff; // Exponent of the alpha fade from edge inward; 1=linear, >1 = tighter
-	Scalar haloPulseSpeed; // How fast the glow pulses, in cycles per second, 0 = steady
-	Scalar haloMinPulse; // Minimum glow strength during a pulse, 0..1
-	Scalar haloMaxSizeListening; // Maximum glow size during a pulse while the user is speaking, >0
-	Scalar haloFalloffListening; // Exponent of the alpha fade from edge inward while the user is speaking; 1=linear, >1 = tighter
-	double listeningBufferDuration; // How long to keep the glow on after the user stops speaking, in seconds
-	double stateTransitionDuration; // How long to fade between states, in seconds
-	Scalar micGain; // How much to amplify the microphone signal before computing the glow level, 0 = no glow
-	Scalar micLevelAttack; // How fast to increase the glow level when the microphone signal rises, in seconds
-	Scalar micLevelRelease; // How fast to decrease the glow level when the microphone signal falls, in seconds
+	int numHaloBands; // Gradient steps per edge; more = smoother (1..256)
+	Scalar haloThickness; // Glow depth, as a fraction of the shorter visible screen side (0..0.5)
+	Scalar haloMaxAlpha; // Glow brightness at the screen edge (0..1)
+	Scalar haloFalloff; // How fast the glow fades inward; 1 = linear, higher = tighter rim (>0)
+	Scalar haloPulseSpeed; // Breathing speed, in pulses per second; 0 = steady (>=0)
+	Scalar haloMinPulse; // Lowest brightness while breathing or listening (0..1)
+	Scalar haloMaxSizeListening; // Glow size at full voice; 1 = no growth (>=1)
+	Scalar haloFalloffListening; // Fade at full voice; lower = glow spreads further inward (>0)
+	double listeningBufferDuration; // Extra listening time after push-to-talk is released, in seconds (>0)
+	double stateTransitionDuration; // color/fade time between states, in seconds; 0 = instant (>=0)
+	Scalar micGain; // Mic loudness multiplier; higher = full glow at a quieter voice (>=0)
+	double micLevelAttack; // How quickly the glow rises with your voice, in seconds (>0)
+	double micLevelRelease; // How quickly the glow falls in pauses, in seconds (>0)
+	GLColor<GLfloat, 4> warmupColor; // Glow color while warming up (alpha is forced to 1)
+	GLColor<GLfloat, 4> listeningColor; // Glow color while listening (alpha is forced to 1)
+	GLColor<GLfloat, 4> thinkingColor; // Glow color while thinking (alpha is forced to 1)
+	GLColor<GLfloat, 4> speakingColor; // Glow color while speaking (alpha is forced to 1)
+	GLColor<GLfloat, 4> errorColor; // Glow color on error (alpha is forced to 1)
 
 	/* Constructors and destructors: */
 	public:

@@ -17,6 +17,7 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <GL/GLColorTemplates.h>
 #include <GL/GLGeometryWrappers.h>
 #include <GL/GLTransformationWrappers.h>
+#include <GL/GLValueCoders.h>
 
 #include <Math/Math.h>
 #include <Math/Constants.h>
@@ -87,36 +88,36 @@ const char* getStateName(VoiceAssistant::AssistantState state)
 	return "Unknown";
 }
 
-GLColor<GLfloat, 4> getStateColor(VoiceAssistant::AssistantState state)
+GLColor<GLfloat, 4> VoiceAssistant::getStateColor(VoiceAssistant::AssistantState state) const
 {
 	switch (state)
 	{
-		case VoiceAssistant::Warmup:
-			return GLColor<GLfloat, 4>(0.9f, 0.9f, 0.95f); // Dim grey: powering up
 		case VoiceAssistant::Idle:
-			return GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f); // Muted cyan-grey: resting
+			return GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f); // Transparent
+		case VoiceAssistant::Warmup:
+			return factory->warmupColor; // Dim grey: powering up
 		case VoiceAssistant::Listening:
-			return GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f); // Yellow: actively listening
+			return factory->listeningColor; // Yellow: actively listening
 		case VoiceAssistant::Thinking:
-			return GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f); // Blue: processing
+			return factory->thinkingColor; // Blue: processing
 		case VoiceAssistant::Speaking:
-			return GLColor<GLfloat, 4>(0.2f, 1.0f, 0.4f); // Green: responding
+			return factory->speakingColor; // Green: responding
 		case VoiceAssistant::Error:
-			return GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f); // Intense red: error
+			return factory->errorColor; // Intense red: error
 	}
 	return GLColor<GLfloat, 4>(1.0f, 1.0f, 1.0f); // Unreachable if every case handled, keeps compiler happy
 }
 
-void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, const int numBands, const Scalar& opacity)
+void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, int numHaloBands, const Scalar& opacity)
 {
 	glBegin(GL_QUAD_STRIP);
-	for (int i = 0; i <= numBands; ++i)
+	for (int i = 0; i <= numHaloBands; ++i)
 	{
-		Scalar inwardFraction = Scalar(i) / Scalar(numBands); // How far into halo we are, 0=at edge, 1=at inner edge of halo
+		Scalar inwardFraction = Scalar(i) / Scalar(numHaloBands); // How far into halo we are, 0=at edge, 1=at inner edge of halo
 		Scalar inwardDistance = inwardFraction * haloWidth; // How far into the screen we are, in screen coordinates
 
 		Scalar alpha = Math::pow(1.0 - inwardFraction, haloFalloff) * opacity; // How strong the glow is, 0=transparent, 1=full
-		GLColor<GLfloat, 4> bandColor(color[0], color[1], color[2], GLfloat(alpha)); // Explicit narrowing: the alpha math is done in double, the colour is float
+		GLColor<GLfloat, 4> bandColor(color[0], color[1], color[2], GLfloat(alpha)); // Explicit narrowing: the alpha math is done in double, the color is float
 		glColor(bandColor);
 
 		glVertex(startCorner.position + startCorner.inward * inwardDistance);
@@ -161,9 +162,6 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
 	// Don't draw anything in idle state
 	if (voiceAssistant->state == VoiceAssistant::Idle && elapsed > settings->stateTransitionDuration) return;
-
-	// Number of bands in custom gradient, more bands = smoother gradient, but more expensive to render
-	const int numBands = 24;
 
 	GLColor<GLfloat, 4> color = voiceAssistant->getHaloColor(getApplicationTime());
 
@@ -230,16 +228,16 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	const Scalar opacity = strength * settings->haloMaxAlpha * color[3];
 
 	// Left edge
-	drawEdgeGlow(color, bottomLeft, topLeft, haloWidth, falloff, numBands, opacity);
+	drawEdgeGlow(color, bottomLeft, topLeft, haloWidth, falloff, settings->numHaloBands, opacity);
 
 	// Right edge
-	drawEdgeGlow(color, bottomRight, topRight, haloWidth, falloff, numBands, opacity);
+	drawEdgeGlow(color, bottomRight, topRight, haloWidth, falloff, settings->numHaloBands, opacity);
 
 	// Top edge
-	drawEdgeGlow(color, topLeft, topRight, haloWidth, falloff, numBands, opacity);
+	drawEdgeGlow(color, topLeft, topRight, haloWidth, falloff, settings->numHaloBands, opacity);
 
 	// Bottom edge
-	drawEdgeGlow(color, bottomLeft, bottomRight, haloWidth, falloff, numBands, opacity);
+	drawEdgeGlow(color, bottomLeft, bottomRight, haloWidth, falloff, settings->numHaloBands, opacity);
 
 	glPopMatrix();
 }
@@ -328,15 +326,24 @@ VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) 
 	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
 	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)), recordingSoundContext(nullptr), micLevel(0.0f), smoothedMicLevel(0.0f)
 {
-	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test", &VoiceAssistant::testCommandCallback, this,
-		"<stateName>", "Switches the assistant to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
+	if (owner == nullptr)
+	{
+		Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test", &VoiceAssistant::testCommandCallback, this,
+			"<stateName>", "Switches the assistant to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
 
-	// The 0s here are the argument descriptions: these commands take no arguments ('this' is the userData)
-	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press", &VoiceAssistant::voiceAssistantPressCallback, this, 0,
-		"Begin a voice assistant request (simulate pressing the button)");
+		// The 0s here are the argument descriptions: these commands take no arguments ('this' is the userData)
+		Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.press", &VoiceAssistant::voiceAssistantPressCallback, this, 0,
+			"Begin a voice assistant request (simulate pressing the button)");
 
-	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release", &VoiceAssistant::voiceAssistantReleaseCallback, this, 0,
-		"Release a voice assistant request (simulate releasing the button)");
+		Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release", &VoiceAssistant::voiceAssistantReleaseCallback, this, 0,
+			"Release a voice assistant request (simulate releasing the button)");
+
+		owner = this;
+	}
+	else
+	{
+		Misc::consoleWarning("VoiceAssistant: only one instance is allowed, ignoring this instance");
+	}
 }
 
 VoiceAssistant::~VoiceAssistant(void)
@@ -344,6 +351,11 @@ VoiceAssistant::~VoiceAssistant(void)
 	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.test");
 	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.press");
 	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.release");
+
+	if (owner == this)
+	{
+		owner = nullptr;
+	}
 }
 
 VisletFactory* VoiceAssistant::getFactory(void) const
@@ -356,6 +368,8 @@ void VoiceAssistant::enable(bool startup)
 	Vislet::enable(startup);
 	Misc::consoleNote("VoiceAssistant: starting");
 
+	if (owner != this) return;
+
 	// Add tool
 	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(), this),
 		Vrui::ToolManager::defaultToolFactoryDestructor);
@@ -365,7 +379,6 @@ void VoiceAssistant::enable(bool startup)
 	{
 		applyState(Warmup);
 	}
-
 	else
 	{
 		applyState(Idle);
@@ -373,17 +386,23 @@ void VoiceAssistant::enable(bool startup)
 
 	// Add node to scene graph
 	getSceneGraphManager()->addPhysicalNode(*haloNode);
+
+	Misc::consoleNote("VoiceAssistant: started");
 }
 
 void VoiceAssistant::disable(bool shutdown)
 {
-	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
-	Vislet::disable(shutdown);
 	Misc::consoleNote("VoiceAssistant: stopping");
+	Vislet::disable(shutdown);
+
+	if (owner != this) return;
+
+	getSceneGraphManager()->removePhysicalNode(*haloNode);
 	userIsSpeaking = false;
 	applyState(Idle);
-	// Remove node from scene graph
-	getSceneGraphManager()->removePhysicalNode(*haloNode);
+	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
+
+	Misc::consoleNote("VoiceAssistant: stopped");
 }
 
 GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
@@ -422,7 +441,6 @@ GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
 		targetColorCopy[3] = static_cast<GLfloat>(oldColorCopy[3] + t * (targetColorCopy[3] - oldColorCopy[3]));
 	}
 
-	// Fade out the glow after the user stops speaking, if we're in the Speaking state
 	Scalar fade = 1.0;
 	if (state == VoiceAssistant::Listening && !userIsSpeaking)
 	{
@@ -480,7 +498,7 @@ void VoiceAssistant::frame(void)
 	smoothedMicLevel += (target - smoothedMicLevel) * amount;
 
 	// Update drawing (scheduled to next visual frame, can be configured)
-	if (state != Idle || elapsed < factory->stateTransitionDuration)
+	if (state != Idle || getApplicationTime() - stateStartTime < factory->stateTransitionDuration)
 	{
 		scheduleUpdate(getNextAnimationTime());
 	}
@@ -508,7 +526,7 @@ void VoiceAssistant::applyState(AssistantState newState)
 			recordingSoundContext = getRecordingSoundContext();
 			if (recordingSoundContext == nullptr)
 			{
-				Misc::consoleWarning("VoiceAssistant: no microphone available");
+				// No microphone available
 			}
 			else
 			{
@@ -629,15 +647,21 @@ Methods of class VoiceAssistantFactory:
 
 VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	VisletFactory("VoiceAssistant", visletManager),
+	numHaloBands(24),
 	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
 	haloMinPulse(0.3), haloMaxSizeListening(1.8),
 	haloFalloffListening(0.6),
 	listeningBufferDuration(0.8), stateTransitionDuration(0.5),
-	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16)
+	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16),
+	warmupColor(GLColor<GLfloat, 4>(1.0f, 0.55f, 0.1f)), // Orange: powering up
+	listeningColor(GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f)), // Yellow: actively listening
+	thinkingColor(GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f)), // Blue: processing
+	speakingColor(GLColor<GLfloat, 4>(0.2f, 1.0f, 0.4f)), // Green: responding
+	errorColor(GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f)) // Intense red: error
 {
-	VoiceAssistant::factory = this;
-
+	// Load settings from the vislet's section in Vrui's configuration; the defaults above stay for any missing tag
 	Misc::ConfigurationFileSection cfs = visletManager.getVisletClassSection(getClassName());
+	cfs.updateValue("./numHaloBands", numHaloBands);
 	cfs.updateValue("./haloThickness", haloThickness);
 	cfs.updateValue("./haloMaxAlpha", haloMaxAlpha);
 	cfs.updateValue("./haloFalloff", haloFalloff);
@@ -651,8 +675,39 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./micLevelAttack", micLevelAttack);
 	cfs.updateValue("./micLevelRelease", micLevelRelease);
 
+	cfs.updateValue("./warmupColor", warmupColor);
+	cfs.updateValue("./listeningColor", listeningColor);
+	cfs.updateValue("./thinkingColor", thinkingColor);
+	cfs.updateValue("./speakingColor", speakingColor);
+	cfs.updateValue("./errorColor", errorColor);
+
+	// Force alpha to 1 for all colors, so that the state fades are applied correctly in getHaloColor()
+	warmupColor[3] = 1.0f;
+	listeningColor[3] = 1.0f;
+	thinkingColor[3] = 1.0f;
+	speakingColor[3] = 1.0f;
+	errorColor[3] = 1.0f;
+
+	// Clamp every setting to its valid range, so a bad configuration value can't hang, NaN, or invert the halo
+	numHaloBands = Math::clamp(numHaloBands, 1, 256);
+	haloThickness = Math::clamp(haloThickness, Scalar(0), Scalar(0.5));
+	haloMaxAlpha = Math::clamp(haloMaxAlpha, Scalar(0), Scalar(1));
+	haloFalloff = Math::max(haloFalloff, Scalar(0.05));
+	haloPulseSpeed = Math::max(haloPulseSpeed, Scalar(0));
+	haloMinPulse = Math::clamp(haloMinPulse, Scalar(0), Scalar(1));
+	haloMaxSizeListening = Math::max(haloMaxSizeListening, Scalar(1));
+	haloFalloffListening = Math::max(haloFalloffListening, Scalar(0.05));
+	listeningBufferDuration = Math::max(listeningBufferDuration, 0.01);
+	stateTransitionDuration = Math::max(stateTransitionDuration, 0.0);
+	micGain = Math::max(micGain, Scalar(0));
+	micLevelAttack = Math::max(micLevelAttack, 0.001);
+	micLevelRelease = Math::max(micLevelRelease, 0.001);
+
 	// Request sound processing, so Vrui starts its sound subsystem
 	requestSound();
+
+	// Publish the factory last, once all settings are loaded and valid
+	VoiceAssistant::factory = this;
 }
 
 VoiceAssistantFactory::~VoiceAssistantFactory(void)
@@ -693,7 +748,7 @@ extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
 Static elements of class VoiceAssistant:
 ******************************************/
 VoiceAssistantFactory* VoiceAssistant::factory = nullptr;
-
+VoiceAssistant* VoiceAssistant::owner = nullptr;
 }
 
 }
