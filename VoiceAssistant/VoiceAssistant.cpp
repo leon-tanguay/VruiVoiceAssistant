@@ -299,26 +299,6 @@ VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) 
 	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
 	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f))
 {
-}
-
-VoiceAssistant::~VoiceAssistant(void)
-{
-}
-
-VisletFactory* VoiceAssistant::getFactory(void) const
-{
-	return factory;
-}
-
-void VoiceAssistant::enable(bool startup)
-{
-	// TODO: use the startup argument (it is only true on the first enable call)
-	// TODO: the command callbacks are registered on every enable and never removed on disable.
-	// Option: keep them registered, and have them check isActive() and print that the assistant is inactive
-
-	Vislet::enable(startup);
-	Misc::consoleNote("VoiceAssistant: starting");
-
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test", &VoiceAssistant::testCommandCallback, this,
 		"<stateName>", "Switches the assistant to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
 
@@ -328,13 +308,39 @@ void VoiceAssistant::enable(bool startup)
 
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.release", &VoiceAssistant::voiceAssistantReleaseCallback, this, 0,
 		"Release a voice assistant request (simulate releasing the button)");
+}
+
+VoiceAssistant::~VoiceAssistant(void)
+{
+	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.test");
+	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.press");
+	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.release");
+}
+
+VisletFactory* VoiceAssistant::getFactory(void) const
+{
+	return factory;
+}
+
+void VoiceAssistant::enable(bool startup)
+{
+	Vislet::enable(startup);
+	Misc::consoleNote("VoiceAssistant: starting");
 
 	// Add tool
 	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(), this),
 		Vrui::ToolManager::defaultToolFactoryDestructor);
 
 	// Start on warmup
-	applyState(Warmup);
+	if (startup)
+	{
+		applyState(Warmup);
+	}
+
+	else
+	{
+		applyState(Idle);
+	}
 
 	// Add node to scene graph
 	getSceneGraphManager()->addPhysicalNode(*haloNode);
@@ -345,7 +351,8 @@ void VoiceAssistant::disable(bool shutdown)
 	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
 	Vislet::disable(shutdown);
 	Misc::consoleNote("VoiceAssistant: stopping");
-
+	userIsSpeaking = false;
+	applyState(Idle);
 	// Remove node from scene graph
 	getSceneGraphManager()->removePhysicalNode(*haloNode);
 }
@@ -453,6 +460,11 @@ void VoiceAssistant::applyState(AssistantState newState)
 void VoiceAssistant::testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
 {
 	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	if (!thisPtr->isActive())
+	{
+		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
+		return;
+	}
 	std::string stateArg(argumentBegin, argumentEnd);
 
 	AssistantState newState;
@@ -481,6 +493,11 @@ void VoiceAssistant::testCommandCallback(const char* argumentBegin, const char* 
 void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
 {
 	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	if (!thisPtr->isActive())
+	{
+		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
+		return;
+	}
 	thisPtr->applyState(Listening);
 	thisPtr->userIsSpeaking = true;
 }
@@ -489,6 +506,11 @@ void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, cons
 void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
 {
 	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	if (!thisPtr->isActive())
+	{
+		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
+		return;
+	}
 
 	/* If it is still listening by time it is released,
 	start timer before it actually stops listening to input */
