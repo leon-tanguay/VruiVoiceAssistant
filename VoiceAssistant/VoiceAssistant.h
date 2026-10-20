@@ -113,15 +113,19 @@ practice with a new Vrui class, not required for correctness.
 #ifndef VRUI_VISLETS_VOICEASSISTANT_INCLUDED
 #define VRUI_VISLETS_VOICEASSISTANT_INCLUDED
 
+#include <atomic>
+
 #include <Geometry/Point.h>
 #include <Geometry/Rotation.h>
 
+#include <GL/GLColorTemplates.h>
+
+#include <Misc/Autopointer.h>
+
+#include <Vrui/SoundContext.h>
 #include <Vrui/Types.h>
 #include <Vrui/Vislet.h>
 #include <Vrui/UtilityTool.h>
-
-#include <Misc/Autopointer.h>
-#include <GL/GLColorTemplates.h>
 
 /* Forward declarations: */
 
@@ -200,6 +204,10 @@ class VoiceAssistant : public Vislet
 	bool userIsSpeaking;
 	double userFinishedSpeakingTime;
 	GLColor<GLfloat, 4> transitionStartColor;
+	SoundContext* recordingSoundContext;
+	Misc::Autopointer<SoundContext::RecordingCallback> micCallback;
+	std::atomic<float> micLevel;
+	float smoothedMicLevel;
 
 	/* Private methods: */
 	private:
@@ -207,6 +215,7 @@ class VoiceAssistant : public Vislet
 	static void testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
+	void micCallbackMethod(const SoundContext::RecordingCallbackData& cbData);
 
 	/* Constructors and destructors: */
 	public:
@@ -233,8 +242,14 @@ class VoiceAssistantFactory : public VisletFactory
 	Scalar haloMaxAlpha; // Glow strength at the screen edge, 0..1 (alpha; with additive blending, acts as brightness)
 	Scalar haloFalloff; // Exponent of the alpha fade from edge inward; 1=linear, >1 = tighter
 	Scalar haloPulseSpeed; // How fast the glow pulses, in cycles per second, 0 = steady
+	Scalar haloMinPulse; // Minimum glow strength during a pulse, 0..1
+	Scalar haloMaxSizeListening; // Maximum glow size during a pulse while the user is speaking, >0
+	Scalar haloFalloffListening; // Exponent of the alpha fade from edge inward while the user is speaking; 1=linear, >1 = tighter
 	double listeningBufferDuration; // How long to keep the glow on after the user stops speaking, in seconds
 	double stateTransitionDuration; // How long to fade between states, in seconds
+	Scalar micGain; // How much to amplify the microphone signal before computing the glow level, 0 = no glow
+	Scalar micLevelAttack; // How fast to increase the glow level when the microphone signal rises, in seconds
+	Scalar micLevelRelease; // How fast to decrease the glow level when the microphone signal falls, in seconds
 
 	/* Constructors and destructors: */
 	public:

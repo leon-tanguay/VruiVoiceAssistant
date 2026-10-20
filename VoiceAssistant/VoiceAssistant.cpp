@@ -25,9 +25,12 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <Misc/ConfigurationFile.h>
 #include <Misc/MessageLogger.h>
 #include <Misc/StandardValueCoders.h>
+#include <Misc/SizedTypes.h>
 
 #include <SceneGraph/GLRenderState.h>
 #include <SceneGraph/GraphNode.h>
+
+#include <Threads/FunctionCalls.h>
 
 #include <Vrui/DisplayState.h>
 #include <Vrui/SceneGraphManager.h>
@@ -154,19 +157,15 @@ const char* VoiceAssistant::HaloNode::getClassName(void) const
 
 void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderState) const
 {
+	const VoiceAssistantFactory* settings = voiceAssistant->factory;
 	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
 	// Don't draw anything in idle state
-	if (voiceAssistant->state == VoiceAssistant::Idle && elapsed > voiceAssistant->factory->stateTransitionDuration) return;
+	if (voiceAssistant->state == VoiceAssistant::Idle && elapsed > settings->stateTransitionDuration) return;
 
 	// Number of bands in custom gradient, more bands = smoother gradient, but more expensive to render
 	const int numBands = 24;
-	const Scalar minPulse = 0.4; // How dim the glow gets at its minimum, 0=off, 1=always full brightness
-
-	const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * voiceAssistant->factory->haloPulseSpeed); // Oscillates between 0 and 1, one full cycle every 1/haloPulseSpeed seconds
-	const Scalar pulse = minPulse + (1 - minPulse) * wave;
 
 	GLColor<GLfloat, 4> color = voiceAssistant->getHaloColor(getApplicationTime());
-	const Scalar opacity = pulse * voiceAssistant->factory->haloMaxAlpha * color[3];
 
 	// Get screen size and orientation
 	const DisplayState& displayState = getDisplayState(renderState.contextData);
@@ -181,7 +180,7 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	const Scalar visibleBottom = panRect[2] * screenHeight;
 	const Scalar visibleTop = panRect[3] * screenHeight;
 
-	const Scalar haloWidth = Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom) * voiceAssistant->factory->haloThickness;
+	Scalar haloWidth = Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom) * voiceAssistant->factory->haloThickness;
 
 	// Render state setup
 	renderState.disableMaterials();
@@ -200,17 +199,47 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	const ScreenCorner topRight(Point2(visibleRight, visibleTop), Vector2(-1, -1));
 	const ScreenCorner topLeft(Point2(visibleLeft, visibleTop), Vector2(1, -1));
 
+	// Glow strength 0..1 (before max alpha and state fades) and size multiplier (1 = configured thickness)
+	Scalar strength;
+	Scalar sizeScale = 1.0;
+	Scalar falloff = settings->haloFalloff;
+	if (voiceAssistant->state == VoiceAssistant::Listening)
+	{
+		// Voice level 0..1: smoothed microphone loudness, amplified and capped
+		const Scalar voiceLevel = Math::min(Scalar(voiceAssistant->smoothedMicLevel) * settings->micGain, Scalar(1));
+
+		// Silence -> floor, full voice -> maximum, for both brightness and size
+		strength = settings->haloMinPulse + (1 - settings->haloMinPulse) * voiceLevel;
+		sizeScale = 1 + (settings->haloMaxSizeListening - 1) * voiceLevel;
+
+		//change gradient slope based on voice level, so that the glow is more concentrated at the edges when the user is speaking
+		falloff = settings->haloFalloff + (settings->haloFalloffListening - settings->haloFalloff) * voiceLevel;
+	}
+	else
+	{
+		// Idle breathing between the floor and full strength
+		const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * settings->haloPulseSpeed);
+		strength = settings->haloMinPulse + (1 - settings->haloMinPulse) * wave;
+	}
+
+	// Grow with the voice, but never past half the visible area (opposite edges would overlap)
+	const Scalar maxWidth = 0.5 * Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom);
+	haloWidth = Math::min(haloWidth * sizeScale, maxWidth);
+
+	// State fades (color[3]) are applied last, so fading in and out of Idle still reaches 0
+	const Scalar opacity = strength * settings->haloMaxAlpha * color[3];
+
 	// Left edge
-	drawEdgeGlow(color, bottomLeft, topLeft, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+	drawEdgeGlow(color, bottomLeft, topLeft, haloWidth, falloff, numBands, opacity);
 
 	// Right edge
-	drawEdgeGlow(color, bottomRight, topRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+	drawEdgeGlow(color, bottomRight, topRight, haloWidth, falloff, numBands, opacity);
 
 	// Top edge
-	drawEdgeGlow(color, topLeft, topRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+	drawEdgeGlow(color, topLeft, topRight, haloWidth, falloff, numBands, opacity);
 
 	// Bottom edge
-	drawEdgeGlow(color, bottomLeft, bottomRight, haloWidth, voiceAssistant->factory->haloFalloff, numBands, opacity);
+	drawEdgeGlow(color, bottomLeft, bottomRight, haloWidth, falloff, numBands, opacity);
 
 	glPopMatrix();
 }
@@ -297,7 +326,7 @@ Methods of class VoiceAssistant:
 
 VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) :
 	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
-	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f))
+	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)), recordingSoundContext(nullptr), micLevel(0.0f), smoothedMicLevel(0.0f)
 {
 	Vrui::getCommandDispatcher().addCommandCallback("voiceAssistant.test", &VoiceAssistant::testCommandCallback, this,
 		"<stateName>", "Switches the assistant to the named state (Warmup|Idle|Listening|Thinking|Speaking|Error), for testing");
@@ -435,6 +464,21 @@ void VoiceAssistant::frame(void)
 	else if (state == Speaking && elapsed >= speakingDuration)
 		applyState(Idle);
 
+	// Update the microphone level for the halo glow, if in Listening state
+	const float rawLevel = micLevel;
+
+	float target = 0.0f;
+
+	if (state == Listening)
+	{
+		target = rawLevel;
+	}
+
+	const float timeConstant = (target > smoothedMicLevel) ? factory->micLevelAttack : factory->micLevelRelease;
+
+	const float amount = float(1.0f - Math::exp(-getFrameTime() / timeConstant));
+	smoothedMicLevel += (target - smoothedMicLevel) * amount;
+
 	// Update drawing (scheduled to next visual frame, can be configured)
 	if (state != Idle || elapsed < factory->stateTransitionDuration)
 	{
@@ -446,12 +490,70 @@ void VoiceAssistant::applyState(AssistantState newState)
 {
 	if (state != newState)
 	{
+		// Leaving listening, disable mic
+		if (state == Listening)
+		{
+			micLevel = 0.0f;
+			smoothedMicLevel = 0.0f;
+			if (recordingSoundContext != nullptr)
+			{
+				recordingSoundContext->removeRecordingCallback(*micCallback);
+				recordingSoundContext = nullptr;
+			}
+		}
+
+		// Entering listening, enable mic
+		else if (newState == Listening)
+		{
+			recordingSoundContext = getRecordingSoundContext();
+			if (recordingSoundContext == nullptr)
+			{
+				Misc::consoleWarning("VoiceAssistant: no microphone available");
+			}
+			else
+			{
+				micCallback = Threads::createFunctionCall(this, &VoiceAssistant::micCallbackMethod);
+				recordingSoundContext->addRecordingCallback(*micCallback);
+			}
+		}
+
 		transitionStartColor = getHaloColor(getApplicationTime());
 		state = newState;
 		stateStartTime = getApplicationTime();
 		// Use Vrui message logger to log state change without need for std::string
 		Misc::formattedConsoleNote("VoiceAssistant: state changed to %s", getStateName(state));
 	}
+}
+
+void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
+{
+	const Sound::SoundDataFormat& format = cbData.soundContext.getRecordingFormat();
+
+	if (format.bytesPerSample != sizeof(Misc::SInt16))
+	{
+		// Runs too fast, this would print hundreds of times a second
+		// Unexpected microphone format, expected 16-bit signed int
+		return;
+	}
+
+	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
+
+	if (cbData.numFrames == 0)
+	{
+		// Microphone callback received 0 frames
+		return;
+	}
+
+	const size_t numSamples = cbData.numFrames * format.samplesPerFrame;
+	double sumSquares = 0.0;
+	for (size_t i = 0; i < numSamples; ++i)
+	{
+		double sample = samples[i];
+		sumSquares += sample * sample;
+	}
+
+	double rms = Math::sqrt(sumSquares / numSamples) / 32768.0; // Normalize to [-1, 1] range for 16-bit signed integer
+	micLevel = float(rms);
 }
 
 // Console command to test state changes, for debugging or demonstration purposes
@@ -528,7 +630,10 @@ Methods of class VoiceAssistantFactory:
 VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	VisletFactory("VoiceAssistant", visletManager),
 	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
-	listeningBufferDuration(0.8), stateTransitionDuration(0.5)
+	haloMinPulse(0.3), haloMaxSizeListening(1.8),
+	haloFalloffListening(0.6),
+	listeningBufferDuration(0.8), stateTransitionDuration(0.5),
+	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16)
 {
 	VoiceAssistant::factory = this;
 
@@ -537,11 +642,22 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./haloMaxAlpha", haloMaxAlpha);
 	cfs.updateValue("./haloFalloff", haloFalloff);
 	cfs.updateValue("./haloPulseSpeed", haloPulseSpeed);
+	cfs.updateValue("./haloMinPulse", haloMinPulse);
+	cfs.updateValue("./haloMaxSizeListening", haloMaxSizeListening);
+	cfs.updateValue("./haloFalloffListening", haloFalloffListening);
+	cfs.updateValue("./listeningBufferDuration", listeningBufferDuration);
+	cfs.updateValue("./stateTransitionDuration", stateTransitionDuration);
+	cfs.updateValue("./micGain", micGain);
+	cfs.updateValue("./micLevelAttack", micLevelAttack);
+	cfs.updateValue("./micLevelRelease", micLevelRelease);
+
+	// Request sound processing, so Vrui starts its sound subsystem
+	requestSound();
 }
 
 VoiceAssistantFactory::~VoiceAssistantFactory(void)
 {
-	VoiceAssistant::factory = 0;
+	VoiceAssistant::factory = nullptr;
 }
 
 Vislet* VoiceAssistantFactory::createVislet(int numArguments, const char* const arguments[]) const
@@ -576,7 +692,7 @@ extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
 /******************************************
 Static elements of class VoiceAssistant:
 ******************************************/
-VoiceAssistantFactory* VoiceAssistant::factory = 0;
+VoiceAssistantFactory* VoiceAssistant::factory = nullptr;
 
 }
 
