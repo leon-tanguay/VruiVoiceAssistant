@@ -13,13 +13,16 @@ Resolver.h uses for Ollama's replies -- not the old hand-rolled Json class.
 #ifndef VOICEASSISTANT_STTENGINE_INCLUDED
 #define VOICEASSISTANT_STTENGINE_INCLUDED
 
+#include <Misc/SelfDestructPointer.h>
+#include <Misc/SizedTypes.h>
+
 #include <string>
 #include <vector>
-#include <Misc/SizedTypes.h>
 
 // Opaque Vosk C types, defined in vosk_api.h
 // Lets us not need to include all of vosk.h in header, just recognises that Vosk exists
 struct VoskModel;
+struct VoskRecognizer;
 
 namespace VoiceAsst
 {
@@ -39,11 +42,29 @@ class SttEngine
 		ModelHandle& operator=(const ModelHandle& source); // Prohibit assignment
 	};
 
+	struct RecognizerHandle // Owns a VoskRecognizer*; frees it on destruction
+	{
+		VoskRecognizer* recognizer;
+
+		RecognizerHandle(VoskModel* model, float sampleRate); // Null recognizer on failure (does not throw)
+		~RecognizerHandle(void); // Calls vosk_recognizer_free if non-null
+
+		private:
+		RecognizerHandle(const RecognizerHandle& source); // Prohibit copy constructor
+		RecognizerHandle& operator=(const RecognizerHandle& source); // Prohibit assignment
+	};
+
 	ModelHandle model; // The loaded Vosk model, shared by every transcription
+	Misc::SelfDestructPointer<RecognizerHandle> recognizer; // Recognizer for the current utterance; invalid between utterances
+
+	unsigned int channels; // Channel count of the current utterance, for mono mixdown in feed()
 
 	public:
 	SttEngine(const char* modelPath); // Loads the Vosk model from the given folder; throws std::runtime_error on failure
-	std::string transcribe(const std::vector<Misc::SInt16>& samples, unsigned int frameRate, unsigned int channels) const; // Returns the spoken text, or "" if nothing was recognized
+	bool begin(unsigned int frameRate, unsigned int channels); // Starts a new utterance; false if the recognizer can't be created
+	void feed(const Misc::SInt16* samples, size_t numSamples); // Adds interleaved samples to the current utterance
+	std::string finish(void); // Ends the utterance and returns the text, or "" if nothing was recognized
+	//std::string transcribe(const std::vector<Misc::SInt16>& samples, unsigned int frameRate, unsigned int channels) const; // Returns the spoken text, or "" if nothing was recognized
 };
 
 }

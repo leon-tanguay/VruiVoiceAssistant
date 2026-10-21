@@ -328,6 +328,7 @@ VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) 
 	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
 	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)), recordingSoundContext(nullptr),
 	recordingFrameRate(0), recordingChannels(0),
+	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false),
 	micLevel(0.0f), smoothedMicLevel(0.0f)
 {
 	if (owner == nullptr)
@@ -352,6 +353,8 @@ VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) 
 
 VoiceAssistant::~VoiceAssistant(void)
 {
+	stopSttThread();
+
 	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.test");
 	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.press");
 	Vrui::getCommandDispatcher().removeCommandCallback("voiceAssistant.release");
@@ -385,6 +388,16 @@ void VoiceAssistant::enable(bool startup)
 		{
 			Misc::formattedConsoleError("VoiceAssistant: speech recognition unavailable: %s", err.what());
 		}
+
+		// Start the speech-to-text thread, if there is an engine for it to drive
+		if (sttEngine.isValid())
+		{
+			{
+				Threads::MutexCond::Lock lock(recordingCond);
+				sttRunning = true;
+			}
+			sttThread.start(this, &VoiceAssistant::sttThreadMethod);
+		}
 	}
 
 	// Add tool
@@ -407,6 +420,19 @@ void VoiceAssistant::enable(bool startup)
 	Misc::consoleNote("VoiceAssistant: started");
 }
 
+void VoiceAssistant::stopSttThread(void)
+{
+	if (!sttThread.isJoined())
+	{
+		{
+			Threads::MutexCond::Lock lock(recordingCond);
+			sttRunning = false;
+			recordingCond.broadcast();
+		}
+		sttThread.join();
+	}
+}
+
 void VoiceAssistant::disable(bool shutdown)
 {
 	Misc::consoleNote("VoiceAssistant: stopping");
@@ -417,6 +443,9 @@ void VoiceAssistant::disable(bool shutdown)
 	getSceneGraphManager()->removePhysicalNode(*haloNode);
 	userIsSpeaking = false;
 	applyState(Idle);
+
+	stopSttThread();
+
 	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
 
 	Misc::consoleNote("VoiceAssistant: stopped");
@@ -471,6 +500,23 @@ GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
 void VoiceAssistant::frame(void)
 {
 	double elapsed = getApplicationTime() - stateStartTime;
+
+	// Pick up a finished transcript from sttThread, if there is one
+	std::string heard;
+	bool haveTranscript = false;
+	{
+		Threads::MutexCond::Lock lock(recordingCond);
+		if (transcriptReady)
+		{
+			heard = transcript;
+			transcriptReady = false;
+			haveTranscript = true;
+		}
+	}
+	if (haveTranscript && state == Thinking)
+	{
+		Misc::formattedConsoleNote("VoiceAssistant: heard \"%s\"", heard.c_str());
+	}
 
 	// FAKE PIPELINE FOR TESTING ONLY, until the real voice pipeline exists:
 	// timers advance Warmup -> Idle, and after a press/release Listening -> Thinking -> Speaking -> Idle
@@ -538,22 +584,11 @@ void VoiceAssistant::applyState(AssistantState newState)
 				recordingSoundContext->removeRecordingCallback(*micCallback);
 				recordingSoundContext = nullptr;
 
-				// Only triggers on normal resolution of command
-				// Should handle system being disabled, going idle, erroring, etc.
-				if (newState == Thinking)
+				// Tell sttThread the utterance is over: it feeds the last samples, then finishes
 				{
-					{
-						Threads::Mutex::Lock recordingLock(recordingMutex);
-						std::swap(pendingSamples, recordedSamples);
-						recordedSamples.clear();
-					}
-
-					// TEMPORARY step 3a test: runs Vosk on the main thread, freezing rendering until it finishes
-					if (sttEngine.isValid())
-					{
-						std::string transcript = sttEngine->transcribe(pendingSamples, recordingFrameRate, recordingChannels);
-						Misc::formattedConsoleNote("VoiceAssistant: heard \"%s\"", transcript.c_str());
-					}
+					Threads::MutexCond::Lock lock(recordingCond);
+					sttFinishRequested = true;
+					recordingCond.signal();
 				}
 			}
 		}
@@ -561,9 +596,6 @@ void VoiceAssistant::applyState(AssistantState newState)
 		// Entering listening, enable mic
 		else if (newState == Listening)
 		{
-			//clear recorded sample buffer from last session
-			recordedSamples.clear();
-
 			recordingSoundContext = getRecordingSoundContext();
 			if (recordingSoundContext == nullptr)
 			{
@@ -585,6 +617,16 @@ void VoiceAssistant::applyState(AssistantState newState)
 					recordingFrameRate = format.framesPerSecond;
 					recordingChannels = format.samplesPerFrame;
 
+					// Tell sttThread a new utterance is starting, with a clean buffer
+					{
+						Threads::MutexCond::Lock lock(recordingCond);
+						recordedSamples.clear();
+						sttStartRequested = true;
+						sttFinishRequested = false;
+						transcriptReady = false;
+						recordingCond.signal();
+					}
+
 					micCallback = Threads::createFunctionCall(this, &VoiceAssistant::micCallbackMethod);
 					recordingSoundContext->addRecordingCallback(*micCallback);
 				}
@@ -604,6 +646,49 @@ void VoiceAssistant::applyState(AssistantState newState)
 
 int no_mic = 0;
 
+void* VoiceAssistant::sttThreadMethod(void)
+{
+	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
+
+	while (true)
+	{
+		bool start = false;
+		bool finish = false;
+		{
+			Threads::MutexCond::Lock lock(recordingCond);
+			while (sttRunning && recordedSamples.empty() && !sttStartRequested && !sttFinishRequested)
+				recordingCond.wait(lock);
+
+			if (!sttRunning)
+				break;
+
+			start = sttStartRequested;
+			sttStartRequested = false;
+			std::swap(chunk, recordedSamples);
+			finish = sttFinishRequested;
+			sttFinishRequested = false;
+		}
+
+		// Slow work, outside the lock, in order: start, feed, finish
+		if (start)
+			sttEngine->begin(recordingFrameRate, recordingChannels);
+		if (!chunk.empty())
+		{
+			sttEngine->feed(chunk.data(), chunk.size());
+			chunk.clear();
+		}
+		if (finish)
+		{
+			std::string text = sttEngine->finish();
+			Threads::MutexCond::Lock lock(recordingCond);
+			transcript = text;
+			transcriptReady = true;
+		}
+	}
+
+	return 0;
+}
+
 void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
 {
 	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
@@ -617,8 +702,9 @@ void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData
 
 	// Store the recorded samples in a thread-safe manner to be sent to voice recognition
 	{
-		Threads::Mutex::Lock recordingLock(recordingMutex);
+		Threads::MutexCond::Lock recordingLock(recordingCond);
 		recordedSamples.insert(recordedSamples.end(), samples, samples + numSamples);
+		recordingCond.signal(); // Wake sttThread: there is audio to feed
 	}
 
 	double sumSquares = 0.0;

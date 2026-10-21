@@ -17,28 +17,15 @@ SttEngine - See SttEngine.h.
 namespace VoiceAsst
 {
 
-namespace
-{ // Everything inside ONLY visible in this c++ file
-
-struct RecognizerHandle // Owns a VoskRecognizer*; frees it on destruction
+SttEngine::RecognizerHandle::RecognizerHandle(VoskModel* model, float sampleRate) :
+	recognizer(vosk_recognizer_new(model, sampleRate))
 {
-	VoskRecognizer* recognizer;
+}
 
-	RecognizerHandle(VoskModel* model, float sampleRate) :
-		recognizer(vosk_recognizer_new(model, sampleRate))
-	{
-	}
-	~RecognizerHandle(void)
-	{
-		if (recognizer != nullptr)
-			vosk_recognizer_free(recognizer);
-	}
-
-	private:
-	RecognizerHandle(const RecognizerHandle& source); // Prohibit copy constructor
-	RecognizerHandle& operator=(const RecognizerHandle& source); // Prohibit assignment
-};
-
+SttEngine::RecognizerHandle::~RecognizerHandle(void)
+{
+	if (recognizer != nullptr)
+		vosk_recognizer_free(recognizer);
 }
 
 SttEngine::ModelHandle::ModelHandle(const char* modelPath) :
@@ -56,24 +43,40 @@ SttEngine::ModelHandle::~ModelHandle(void)
 }
 
 SttEngine::SttEngine(const char* modelPath) :
-	model(modelPath)
+	model(modelPath), channels(0)
 {
 }
 
-std::string SttEngine::transcribe(const std::vector<Misc::SInt16>& samples, unsigned int frameRate, unsigned int channels) const
+bool SttEngine::begin(unsigned int frameRate, unsigned int channels)
 {
 	// Reject bad input
-	if (samples.empty() || frameRate == 0 || channels == 0)
+	if (frameRate == 0 || channels == 0)
+		return false;
+
+	recognizer = new RecognizerHandle(model.model, float(frameRate));
+
+	// Vosk couldn't create a recognizer
+	if (recognizer->recognizer == nullptr)
 	{
-		return std::string();
+		recognizer = nullptr; // Don't leave a handle that feed() would trust
+		return false;
 	}
 
-	// Mix audio down to mono
+	this->channels = channels;
+	return true;
+}
+
+void SttEngine::feed(const Misc::SInt16* samples, size_t numSamples)
+{
+	// No utterance in progress
+	if (!recognizer.isValid()) return;
+
+	const Misc::SInt16* audio = samples;
+	size_t audioSize = numSamples;
 	std::vector<Misc::SInt16> mono;
-	const std::vector<Misc::SInt16>* audio = &samples;
 	if (channels > 1)
 	{
-		const size_t numFrames = samples.size() / channels;
+		const size_t numFrames = numSamples / channels;
 		mono.resize(numFrames);
 		for (size_t frame = 0; frame < numFrames; ++frame)
 		{
@@ -82,38 +85,41 @@ std::string SttEngine::transcribe(const std::vector<Misc::SInt16>& samples, unsi
 				sum += samples[frame * channels + channel];
 			mono[frame] = Misc::SInt16(sum / int(channels));
 		}
-		audio = &mono;
+		audio = mono.data();
+		audioSize = numFrames;
 	}
 
-	// Run recognizer
-	RecognizerHandle recognizer(model.model, float(frameRate));
-	if (recognizer.recognizer == nullptr)
-		return std::string();
+	vosk_recognizer_accept_waveform_s(recognizer->recognizer, audio, int(audioSize));
+}
 
-	vosk_recognizer_accept_waveform_s(recognizer.recognizer, audio->data(), int(audio->size()));
-	const char* json = vosk_recognizer_final_result(recognizer.recognizer);
+std::string SttEngine::finish(void)
+{
+	if (!recognizer.isValid()) return std::string();
 
-	// Return results before recognizer dies
-	if (json == nullptr)
-		return std::string();
-
-	try
+	const char* json = vosk_recognizer_final_result(recognizer->recognizer);
+	std::string text;
+	if (json != nullptr)
 	{
-		// Copy Vosk's result into a memory file Vrui's JSON parser can read
-		const size_t jsonSize = strlen(json);
-		IO::FixedMemoryFile* jsonFile = new IO::FixedMemoryFile(jsonSize);
-		IO::FilePtr jsonFilePtr(jsonFile);
-		memcpy(jsonFile->getMemory(), json, jsonSize);
+		try
+		{
+			// Copy Vosk's result into a memory file Vrui's JSON parser can read
+			const size_t jsonSize = strlen(json);
+			IO::FixedMemoryFile* jsonFile = new IO::FixedMemoryFile(jsonSize);
+			IO::FilePtr jsonFilePtr(jsonFile);
+			memcpy(jsonFile->getMemory(), json, jsonSize);
 
-		// Parse it and pull out the "text" property
-		IO::JsonSource jsonSource(jsonFilePtr);
-		IO::JsonPointer root = jsonSource.parseEntity();
-		return IO::getString(IO::getObjectProperty(root, "text"));
+			// Parse it and pull out the "text" property
+			IO::JsonSource jsonSource(jsonFilePtr);
+			IO::JsonPointer root = jsonSource.parseEntity();
+			text = IO::getString(IO::getObjectProperty(root, "text"));
+		}
+		catch (const std::runtime_error&)
+		{
+		}
 	}
-	catch (const std::runtime_error& err)
-	{
-		return std::string();
-	}
+
+	recognizer = nullptr; // Frees the recognizer; the next begin() makes a fresh one
+	return text;
 }
 
 }

@@ -16,7 +16,7 @@
 #   bash scripts/download_models.sh            fetch anything missing (default)
 #   bash scripts/download_models.sh --check     report what's present/missing, fetch nothing
 #   bash scripts/download_models.sh --prune     list files not used by the current
-#                                                VoiceSettings.h defaults (dry run)
+#                                                vislet's default settings (dry run)
 #   bash scripts/download_models.sh --prune --force   actually delete them
 #
 # v2 change from v1: the Piper voice files are checksummed after download (see
@@ -32,12 +32,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Per-user model directory (must match defaultUserModelDir() in VoiceSettings.h):
+# Per-user model directory (must match the default voskModelPath built in
+# VoiceAssistantFactory's constructor, VoiceAssistant/VoiceAssistant.cpp):
 MODELS="${XDG_DATA_HOME:-$HOME/.local/share}/vrui-assistant/models"
 
-# What VoiceSettings.h's defaults actually reference. Keep this in sync by hand
-# when you change VoiceSettings.h's voskModelPath / piperModel defaults --
-# there is deliberately no clever auto-parsing of the header here.
+# What the factory's default settings actually reference. Keep this in sync by
+# hand when you change the voskModelPath (or, later, Piper voice) defaults --
+# there is deliberately no clever auto-parsing of the source here.
 VOSK_NAME="vosk-model-en-us-0.22-lgraph"
 PIPER_VOICE="en_GB-semaine-medium"
 

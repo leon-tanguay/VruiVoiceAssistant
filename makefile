@@ -115,15 +115,13 @@ MAKEINSTALLDIR   = $(VRUI_MAKEINSTALLDIR)
 # Final targets
 ########################################################################
 
-# Local build-output locations for the two plug-ins (mirrors the install
-# sub-directory names under Vrui's local plug-in output root):
+# Local build-output location for the vislet plug-in (mirrors the install
+# sub-directory name under Vrui's local plug-in output root):
 PROJECT_VISLETDIR = $(PROJECT_ROOT)/$(PLUGINDIR)/$(VRVISLETSDIREXT)
-PROJECT_TOOLDIR   = $(PROJECT_ROOT)/$(PLUGINDIR)/$(VRTOOLSDIREXT)
 
-VISLET     := $(PROJECT_VISLETDIR)/libVoiceAssistant.$(PLUGINFILEEXT)
-NUMBERTOOL := $(PROJECT_TOOLDIR)/libVoiceAssistantNumberTool.$(PLUGINFILEEXT)
+VISLET := $(PROJECT_VISLETDIR)/libVoiceAssistant.$(PLUGINFILEEXT)
 
-ALL = $(VISLET) $(NUMBERTOOL)
+ALL = $(VISLET)
 
 .PHONY: all
 all: $(ALL)
@@ -188,17 +186,13 @@ include $(VRUI_MAKEDIR)/BasicMakefile
 
 # C++ sources making up the self-contained vislet "brain". Discovered by
 # wildcard rather than hand-listed: drop a new .cpp into VoiceAssistant/
-# and it is picked up automatically, EXCEPT the number-dictation tool,
-# which is its own separate plug-in target below and must not be linked
-# into the vislet as well. (The command-mode push-to-talk tool used to be
-# a separate VoiceAssistantTool.cpp plug-in too; it now lives inside
-# VoiceAssistant.cpp, so it builds as part of the vislet.)
-VOICEASSISTANT_SOURCES := $(filter-out \
-  $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp, \
-  $(wildcard $(PROJECT_SRCDIR)/*.cpp))
+# and it is picked up automatically. (The push-to-talk tool lives inside
+# VoiceAssistant.cpp, so it builds as part of the vislet; v1's separate
+# number-dictation tool plug-in was dropped from v2.)
+VOICEASSISTANT_SOURCES := $(wildcard $(PROJECT_SRCDIR)/*.cpp)
 
 # Make all plug-in objects depend on the generated configuration (Config.h):
-$(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES) $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp): $(CONFIGFILE)
+$(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES)): $(CONFIGFILE)
 
 # Vendored libvosk: link the in-tree copy, and record rpaths to BOTH the
 # build-tree copy (so it runs uninstalled, e.g. with -dir) and the installed
@@ -207,7 +201,7 @@ VOICEASSISTANT_EXTRALIBS = -L$(VOSK_BUILDDIR) -Wl,-rpath,$(VOSK_BUILDDIR) -Wl,-r
                            -lvosk -lcurl -lespeak-ng -lpulse-simple -lpulse
 
 # Keep the PIC object files from being deleted as pattern-rule intermediates:
-.SECONDARY: $(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES) $(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp)
+.SECONDARY: $(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES))
 
 #
 # The vislet (assistant brain + on-screen orb). Sound (mic capture), IO and
@@ -231,19 +225,10 @@ $(VISLET): $(call PLUGINOBJNAMES,$(VOICEASSISTANT_SOURCES))
 	@echo Linking $@...
 	@$(CCOMP) $(PLUGINLINKFLAGS) -o $@ $^ $(PLUGINLFLAGS) $(VOICEASSISTANT_EXTRALIBS)
 
-#
-# The push-to-talk tool (number-dictation mode).
-#
-$(NUMBERTOOL): PACKAGES = MYVRUI MYGLGEOMETRY MYGLSUPPORT MYGLWRAPPERS MYGEOMETRY MYMATH MYMISC GL
-$(NUMBERTOOL): $(call PLUGINOBJNAMES,$(PROJECT_SRCDIR)/VoiceAssistantNumberTool.cpp)
-	@mkdir -p $(PROJECT_TOOLDIR)
-	@echo Linking $@...
-	@$(CCOMP) $(PLUGINLINKFLAGS) -o $@ $^ $(PLUGINLFLAGS)
-
 ########################################################################
 # Convenience: compile a single object without linking, so you can check
 # one file for errors/warnings while it's still the only one written.
-# Usage: make VRUI_MAKEDIR=... obj FILE=WakeDetector
+# Usage: make VRUI_MAKEDIR=... obj FILE=SttEngine
 ########################################################################
 
 .PHONY: obj
@@ -268,14 +253,13 @@ install: $(ALL)
 	@echo Installing $(PROJECT_DISPLAYNAME) into the Vrui installation...
 # Install the plug-ins into Vrui's plug-in directories:
 	@echo Installing plug-ins...
-# Remove the old standalone command-mode tool plug-in if an earlier install left
-# it behind: it registers a tool class with the same name as the one the vislet
-# now registers itself.
+# Remove the old standalone tool plug-ins if an earlier install left them behind:
+# the command-mode one registers a tool class with the same name as the one the
+# vislet now registers itself, and the number-dictation one was dropped from v2.
 	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantTool.$(PLUGINFILEEXT)
+	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantNumberTool.$(PLUGINFILEEXT)
 	@install -d $(INSTALLPREFIX)$(VISLETINSTALLDIR)
 	@install $(VISLET) $(INSTALLPREFIX)$(VISLETINSTALLDIR)
-	@install -d $(INSTALLPREFIX)$(TOOLINSTALLDIR)
-	@install $(NUMBERTOOL) $(INSTALLPREFIX)$(TOOLINSTALLDIR)
 # Install the command catalog and earcon WAVs:
 	@echo Installing runtime assets...
 	@install -d $(INSTALLPREFIX)$(SHAREINSTALLDIR)
@@ -299,5 +283,5 @@ uninstall:
 	@echo Uninstalling $(PROJECT_DISPLAYNAME)...
 	@rm -f $(INSTALLPREFIX)$(VISLETINSTALLDIR)/libVoiceAssistant.$(PLUGINFILEEXT)
 	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantTool.$(PLUGINFILEEXT) # pre-merge plug-in, if still there
-	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantNumberTool.$(PLUGINFILEEXT)
+	@rm -f $(INSTALLPREFIX)$(TOOLINSTALLDIR)/libVoiceAssistantNumberTool.$(PLUGINFILEEXT) # dropped from v2, if still there
 	@rm -rf $(INSTALLPREFIX)$(SHAREINSTALLDIR)

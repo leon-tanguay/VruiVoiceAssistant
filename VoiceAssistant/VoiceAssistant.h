@@ -126,7 +126,8 @@ practice with a new Vrui class, not required for correctness.
 
 #include "SttEngine.h"
 
-#include <Threads/Mutex.h>
+#include <Threads/MutexCond.h>
+#include <Threads/Thread.h>
 
 #include <vector>
 
@@ -216,12 +217,19 @@ class VoiceAssistant : public Vislet
 	double userFinishedSpeakingTime;
 	GLColor<GLfloat, 4> transitionStartColor;
 	SoundContext* recordingSoundContext;
+
 	Misc::Autopointer<SoundContext::RecordingCallback> micCallback;
-	std::vector<Misc::SInt16> recordedSamples; // Mic samples captured during Listening, guarded by recordingMutex
-	std::vector<Misc::SInt16> pendingSamples; // Finished recording waiting for speech recognition
 	unsigned int recordingFrameRate;
 	unsigned int recordingChannels;
-	Threads::Mutex recordingMutex; // Guards recordedSamples between the audio thread and the main thread
+	Threads::Thread sttThread; // Feeds the microphone to Vosk while the user talks
+	Threads::MutexCond recordingCond; // Guards everything below and wakes sttThread
+	std::vector<Misc::SInt16> recordedSamples; // Mic samples not yet fed to Vosk
+	bool sttRunning; // False tells sttThread to exit
+	bool sttStartRequested; // Main thread wants a new utterance started
+	bool sttFinishRequested; // Main thread wants the current utterance finished
+	bool transcriptReady; // sttThread has put a result in transcript
+	std::string transcript; // Last finished utterance's text
+
 	std::atomic<float> micLevel;
 	float smoothedMicLevel;
 
@@ -232,6 +240,8 @@ class VoiceAssistant : public Vislet
 	static void testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
+	void* sttThreadMethod(void); // Runs on sttThread: waits for audio and feeds it to Vosk, publishes transcript when an utterance finishes
+	void stopSttThread(void); // Main thread: tells sttThread to exit and waits for it; does nothing if it isn't running
 	void micCallbackMethod(const SoundContext::RecordingCallbackData& cbData);
 
 	/* Constructors and destructors: */
