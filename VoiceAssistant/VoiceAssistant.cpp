@@ -11,16 +11,14 @@ VoiceAssistant - See VoiceAssistant.h.
 
 #include "VoiceAssistant.h"
 
-#include <string>
-
 #include <GL/gl.h>
 #include <GL/GLColorTemplates.h>
 #include <GL/GLGeometryWrappers.h>
 #include <GL/GLTransformationWrappers.h>
 #include <GL/GLValueCoders.h>
 
-#include <Math/Math.h>
 #include <Math/Constants.h>
+#include <Math/Math.h>
 
 #include <Misc/CommandDispatcher.h>
 #include <Misc/ConfigurationFile.h>
@@ -31,7 +29,11 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <SceneGraph/GLRenderState.h>
 #include <SceneGraph/GraphNode.h>
 
+#include <string>
+
 #include <Threads/FunctionCalls.h>
+
+#include <utility>
 
 #include <Vrui/DisplayState.h>
 #include <Vrui/SceneGraphManager.h>
@@ -324,7 +326,9 @@ Methods of class VoiceAssistant:
 
 VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) :
 	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
-	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)), recordingSoundContext(nullptr), micLevel(0.0f), smoothedMicLevel(0.0f)
+	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)), recordingSoundContext(nullptr),
+	recordingFrameRate(0), recordingChannels(0),
+	micLevel(0.0f), smoothedMicLevel(0.0f)
 {
 	if (owner == nullptr)
 	{
@@ -369,6 +373,19 @@ void VoiceAssistant::enable(bool startup)
 	Misc::consoleNote("VoiceAssistant: starting");
 
 	if (owner != this) return;
+
+	if (!sttEngine.isValid())
+	{
+		try
+		{
+			sttEngine = new VoiceAsst::SttEngine(factory->voskModelPath.c_str());
+			Misc::formattedConsoleNote("VoiceAssistant: loaded speech model %s", factory->voskModelPath.c_str());
+		}
+		catch (const std::runtime_error& err)
+		{
+			Misc::formattedConsoleError("VoiceAssistant: speech recognition unavailable: %s", err.what());
+		}
+	}
 
 	// Add tool
 	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(), this),
@@ -465,6 +482,8 @@ void VoiceAssistant::frame(void)
 	const double thinkingDuration = 3; // Seconds before Thinking auto-advances to Speaking
 	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
 
+	const double errorDuration = 1; // Seconds before Error auto-advances to Idle
+
 	// If not listening user not speaking, reset the userIsSpeaking flag
 	if (state != Listening && userIsSpeaking)
 	{
@@ -481,7 +500,8 @@ void VoiceAssistant::frame(void)
 		applyState(Speaking);
 	else if (state == Speaking && elapsed >= speakingDuration)
 		applyState(Idle);
-
+	else if (state == Error && elapsed >= errorDuration)
+		applyState(Idle);
 	// Update the microphone level for the halo glow, if in Listening state
 	const float rawLevel = micLevel;
 
@@ -517,21 +537,57 @@ void VoiceAssistant::applyState(AssistantState newState)
 			{
 				recordingSoundContext->removeRecordingCallback(*micCallback);
 				recordingSoundContext = nullptr;
+
+				// Only triggers on normal resolution of command
+				// Should handle system being disabled, going idle, erroring, etc.
+				if (newState == Thinking)
+				{
+					{
+						Threads::Mutex::Lock recordingLock(recordingMutex);
+						std::swap(pendingSamples, recordedSamples);
+						recordedSamples.clear();
+					}
+
+					// TEMPORARY step 3a test: runs Vosk on the main thread, freezing rendering until it finishes
+					if (sttEngine.isValid())
+					{
+						std::string transcript = sttEngine->transcribe(pendingSamples, recordingFrameRate, recordingChannels);
+						Misc::formattedConsoleNote("VoiceAssistant: heard \"%s\"", transcript.c_str());
+					}
+				}
 			}
 		}
 
 		// Entering listening, enable mic
 		else if (newState == Listening)
 		{
+			//clear recorded sample buffer from last session
+			recordedSamples.clear();
+
 			recordingSoundContext = getRecordingSoundContext();
 			if (recordingSoundContext == nullptr)
 			{
 				// No microphone available
+				Misc::consoleWarning("VoiceAssistant: no microphone available");
+				newState = Error;
 			}
 			else
 			{
-				micCallback = Threads::createFunctionCall(this, &VoiceAssistant::micCallbackMethod);
-				recordingSoundContext->addRecordingCallback(*micCallback);
+				const Sound::SoundDataFormat& format = recordingSoundContext->getRecordingFormat();
+				if (format.bytesPerSample != sizeof(Misc::SInt16))
+				{
+					Misc::formattedConsoleWarning("VoiceAssistant: unsupported microphone format (%d bytes/sample, need 16-bit)",
+						int(format.bytesPerSample));
+					newState = Error;
+				}
+				else
+				{
+					recordingFrameRate = format.framesPerSecond;
+					recordingChannels = format.samplesPerFrame;
+
+					micCallback = Threads::createFunctionCall(this, &VoiceAssistant::micCallbackMethod);
+					recordingSoundContext->addRecordingCallback(*micCallback);
+				}
 			}
 		}
 
@@ -539,30 +595,32 @@ void VoiceAssistant::applyState(AssistantState newState)
 		state = newState;
 		stateStartTime = getApplicationTime();
 		// Use Vrui message logger to log state change without need for std::string
-		Misc::formattedConsoleNote("VoiceAssistant: state changed to %s", getStateName(state));
+		if (factory->printStateChanges)
+		{
+			Misc::formattedConsoleNote("VoiceAssistant: state changed to %s", getStateName(state));
+		}
 	}
 }
 
+int no_mic = 0;
+
 void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
 {
-	const Sound::SoundDataFormat& format = cbData.soundContext.getRecordingFormat();
-
-	if (format.bytesPerSample != sizeof(Misc::SInt16))
-	{
-		// Runs too fast, this would print hundreds of times a second
-		// Unexpected microphone format, expected 16-bit signed int
-		return;
-	}
-
 	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
 
 	if (cbData.numFrames == 0)
 	{
-		// Microphone callback received 0 frames
 		return;
 	}
 
-	const size_t numSamples = cbData.numFrames * format.samplesPerFrame;
+	const size_t numSamples = cbData.numFrames * recordingChannels;
+
+	// Store the recorded samples in a thread-safe manner to be sent to voice recognition
+	{
+		Threads::Mutex::Lock recordingLock(recordingMutex);
+		recordedSamples.insert(recordedSamples.end(), samples, samples + numSamples);
+	}
+
 	double sumSquares = 0.0;
 	for (size_t i = 0; i < numSamples; ++i)
 	{
@@ -571,6 +629,8 @@ void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData
 	}
 
 	double rms = Math::sqrt(sumSquares / numSamples) / 32768.0; // Normalize to [-1, 1] range for 16-bit signed integer
+
+	// Atomic, read by frame() on main thread to set halo glow
 	micLevel = float(rms);
 }
 
@@ -618,6 +678,13 @@ void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, cons
 		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
 		return;
 	}
+	// User can only talk when assistant is not busy (Idle, Speaking, or Error)
+	// Allow user to interrupt speaking because the last command will have already been executed
+	if (thisPtr->state != Idle && thisPtr->state != Speaking && thisPtr->state != Error)
+	{
+		Misc::formattedConsoleNote("VoiceAssistant: busy (%s), ignoring press", getStateName(thisPtr->state));
+		return;
+	}
 	thisPtr->applyState(Listening);
 	thisPtr->userIsSpeaking = true;
 }
@@ -651,16 +718,22 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
 	haloMinPulse(0.3), haloMaxSizeListening(1.8),
 	haloFalloffListening(0.6),
-	listeningBufferDuration(0.8), stateTransitionDuration(0.5),
+	listeningBufferDuration(0.3), stateTransitionDuration(0.5),
 	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16),
 	warmupColor(GLColor<GLfloat, 4>(1.0f, 0.55f, 0.1f)), // Orange: powering up
 	listeningColor(GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f)), // Yellow: actively listening
 	thinkingColor(GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f)), // Blue: processing
 	speakingColor(GLColor<GLfloat, 4>(0.2f, 1.0f, 0.4f)), // Green: responding
-	errorColor(GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f)) // Intense red: error
+	errorColor(GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f)), // Intense red: error
+	printStateChanges(false)
 {
+	// Set vosk model path
+	const char* home = getenv("HOME");
+	voskModelPath = std::string(home != nullptr ? home : "") + "/.local/share/vrui-assistant/models/vosk-model-en-us-0.22-lgraph";
+
 	// Load settings from the vislet's section in Vrui's configuration; the defaults above stay for any missing tag
 	Misc::ConfigurationFileSection cfs = visletManager.getVisletClassSection(getClassName());
+	cfs.updateValue("./voskModelPath", voskModelPath);
 	cfs.updateValue("./numHaloBands", numHaloBands);
 	cfs.updateValue("./haloThickness", haloThickness);
 	cfs.updateValue("./haloMaxAlpha", haloMaxAlpha);
@@ -680,6 +753,8 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./thinkingColor", thinkingColor);
 	cfs.updateValue("./speakingColor", speakingColor);
 	cfs.updateValue("./errorColor", errorColor);
+
+	cfs.updateValue("./printStateChanges", printStateChanges);
 
 	// Force alpha to 1 for all colors, so that the state fades are applied correctly in getHaloColor()
 	warmupColor[3] = 1.0f;

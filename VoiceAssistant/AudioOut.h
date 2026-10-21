@@ -6,9 +6,9 @@ supposed to do and what's wrong with v1's version).
 Checked, doesn't fit -- keep raw PulseAudio (pa_simple), don't switch to
 Vrui's own sound-playback class: <Sound/SoundPlayer.h>, Sound::SoundPlayer
 is real, but (1) on Linux it's ALSA-only (Sound::Linux::ALSAPCMDevice
-under the hood, no PulseAudio path), which is the exact problem
-AudioCapture.h's own device-fallback comment exists to work around under
-WSLg, and (2) it plays from a WAV FILE on disk (constructor takes a file
+under the hood, no PulseAudio path), and the raw ALSA "default" device
+is a silent dummy under WSLg (v1's AudioCapture had a whole device-fallback
+chain to work around it), and (2) it plays from a WAV FILE on disk (constructor takes a file
 name), not an in-memory PCM buffer -- using it would mean writing every
 chime and TTS utterance to a temp WAV first, reintroducing the kind of
 temp-file dance item 8 (Tts.cpp) is busy deleting. Vrui's own class

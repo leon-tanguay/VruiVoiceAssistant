@@ -3,9 +3,11 @@ Resolver - TODO: write the banner comment (see ../guide/STYLE_GUIDE.md section 2
 the format, and ../guide/RECODE_CHECKLIST.md item 9 for what this file is
 supposed to do and what's wrong with v1's version).
 
-Parsing Ollama's HTTP reply: read the comment at the top of Json.h first.
-Wrap the response body (a std::string from OllamaClient) in an
-IO::FixedMemoryFile, hand that to IO::JsonSource, call .parseEntity(), then
+Parsing Ollama's HTTP reply: read ../guide/RECODE_CHECKLIST.md item 1 first.
+Copy the response body (a std::string from OllamaClient) into an
+IO::FixedMemoryFile(size) -- NOT the (Byte*,size) constructor, which adopts
+and frees the buffer; SttEngine::transcribe() has the working pattern --
+hand that to IO::JsonSource, call .parseEntity(), then
 IO::getObjectProperty()/IO::getString()/IO::getNumber() to pull out
 kind/command/args/speak/confidence -- not the old hand-rolled Json class.
 

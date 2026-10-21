@@ -121,6 +121,14 @@ practice with a new Vrui class, not required for correctness.
 #include <GL/GLColorTemplates.h>
 
 #include <Misc/Autopointer.h>
+#include <Misc/SelfDestructPointer.h>
+#include <Misc/SizedTypes.h>
+
+#include "SttEngine.h"
+
+#include <Threads/Mutex.h>
+
+#include <vector>
 
 #include <Vrui/SoundContext.h>
 #include <Vrui/Types.h>
@@ -197,6 +205,7 @@ class VoiceAssistant : public Vislet
 	private:
 	class HaloNode; // Scene graph node rendering the halo
 	Misc::Autopointer<HaloNode> haloNode; // The halo node; added to the physical scene graph while the vislet is enabled
+	Misc::SelfDestructPointer<VoiceAsst::SttEngine> sttEngine; // Speech-to-text engine, created in enable()
 
 	static VoiceAssistantFactory* factory;
 	static VoiceAssistant* owner; // The one and only VoiceAssistant instance, if any, that is currently enabled (the one that owns the tool)
@@ -208,6 +217,11 @@ class VoiceAssistant : public Vislet
 	GLColor<GLfloat, 4> transitionStartColor;
 	SoundContext* recordingSoundContext;
 	Misc::Autopointer<SoundContext::RecordingCallback> micCallback;
+	std::vector<Misc::SInt16> recordedSamples; // Mic samples captured during Listening, guarded by recordingMutex
+	std::vector<Misc::SInt16> pendingSamples; // Finished recording waiting for speech recognition
+	unsigned int recordingFrameRate;
+	unsigned int recordingChannels;
+	Threads::Mutex recordingMutex; // Guards recordedSamples between the audio thread and the main thread
 	std::atomic<float> micLevel;
 	float smoothedMicLevel;
 
@@ -241,6 +255,8 @@ class VoiceAssistantFactory : public VisletFactory
 
 	/* Elements: */
 	private:
+	std::string voskModelPath; // Folder of the Vosk speech recognition model
+
 	int numHaloBands; // Gradient steps per edge; more = smoother (1..256)
 	Scalar haloThickness; // Glow depth, as a fraction of the shorter visible screen side (0..0.5)
 	Scalar haloMaxAlpha; // Glow brightness at the screen edge (0..1)
@@ -259,6 +275,7 @@ class VoiceAssistantFactory : public VisletFactory
 	GLColor<GLfloat, 4> thinkingColor; // Glow color while thinking (alpha is forced to 1)
 	GLColor<GLfloat, 4> speakingColor; // Glow color while speaking (alpha is forced to 1)
 	GLColor<GLfloat, 4> errorColor; // Glow color on error (alpha is forced to 1)
+	bool printStateChanges;
 
 	/* Constructors and destructors: */
 	public:
