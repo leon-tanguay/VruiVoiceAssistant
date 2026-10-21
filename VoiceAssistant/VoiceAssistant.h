@@ -287,6 +287,15 @@ class VoiceAssistantFactory : public VisletFactory
 	GLColor<GLfloat, 4> errorColor; // Glow color on error (alpha is forced to 1)
 	bool printStateChanges;
 
+	bool sttVerbose; // Print Vosk/Kaldi's own log output (useful when a model fails to load)
+
+	std::string ollamaUrl; // Default is local, but model could for example run on another machine
+	std::string ollamaModel; // Which Ollama model are we running (e.g. "qwen3:4b", alternative "phi4-mini")
+	double ollamaKeepAlive; // Seconds; any negative value means "keep loaded forever", normalized to -1
+	double ollamaTimeout; // Seconds; Bigger model or slower machine needs more time
+
+	bool dryRun; //	Log the command but don’t run it, for safely testing prompts
+
 	/* Constructors and destructors: */
 	public:
 	VoiceAssistantFactory(VisletManager& visletManager);

@@ -381,7 +381,7 @@ void VoiceAssistant::enable(bool startup)
 	{
 		try
 		{
-			sttEngine = new VoiceAsst::SttEngine(factory->voskModelPath.c_str());
+			sttEngine = new VoiceAsst::SttEngine(factory->voskModelPath.c_str(), factory->sttVerbose);
 			Misc::formattedConsoleNote("VoiceAssistant: loaded speech model %s", factory->voskModelPath.c_str());
 		}
 		catch (const std::runtime_error& err)
@@ -811,7 +811,11 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	thinkingColor(GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f)), // Blue: processing
 	speakingColor(GLColor<GLfloat, 4>(0.2f, 1.0f, 0.4f)), // Green: responding
 	errorColor(GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f)), // Intense red: error
-	printStateChanges(false)
+	printStateChanges(false),
+	sttVerbose(false),
+	ollamaUrl("http://127.0.0.1:11434"), ollamaModel("qwen3:4b"),
+	ollamaKeepAlive(1800.0), ollamaTimeout(15.0),
+	dryRun(false)
 {
 	// Set vosk model path
 	const char* home = getenv("HOME");
@@ -842,6 +846,14 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 
 	cfs.updateValue("./printStateChanges", printStateChanges);
 
+	cfs.updateValue("./sttVerbose", sttVerbose);
+
+	cfs.updateValue("./ollamaUrl", ollamaUrl);
+	cfs.updateValue("./ollamaModel", ollamaModel);
+	cfs.updateValue("./ollamaKeepAlive", ollamaKeepAlive);
+	cfs.updateValue("./ollamaTimeout", ollamaTimeout);
+	cfs.updateValue("./dryRun", dryRun);
+
 	// Force alpha to 1 for all colors, so that the state fades are applied correctly in getHaloColor()
 	warmupColor[3] = 1.0f;
 	listeningColor[3] = 1.0f;
@@ -863,6 +875,20 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	micGain = Math::max(micGain, Scalar(0));
 	micLevelAttack = Math::max(micLevelAttack, 0.001);
 	micLevelRelease = Math::max(micLevelRelease, 0.001);
+	ollamaKeepAlive = Math::max(ollamaKeepAlive, -1.0);
+	ollamaTimeout = Math::clamp(ollamaTimeout, 1.0, 300.0);
+
+	// Check that Ollama strings are plausible, warn when falling back so mistake isn't hidden
+	if (ollamaUrl.compare(0, 7, "http://") != 0 && ollamaUrl.compare(0, 8, "https://") != 0)
+	{
+		Misc::formattedConsoleWarning("VoiceAssistant: ollamaUrl \"%s\" must start with http:// or https://; using the default", ollamaUrl.c_str());
+		ollamaUrl = "http://127.0.0.1:11434";
+	}
+	if (ollamaModel.empty())
+	{
+		Misc::consoleWarning("VoiceAssistant: ollamaModel is empty; using qwen3:4b");
+		ollamaModel = "qwen3:4b";
+	}
 
 	// Request sound processing, so Vrui starts its sound subsystem
 	requestSound();

@@ -24,11 +24,44 @@ a "v1 did this wrong" fix like the pipe/JSON issues elsewhere.
 #ifndef VOICEASSISTANT_OLLAMACLIENT_INCLUDED
 #define VOICEASSISTANT_OLLAMACLIENT_INCLUDED
 
+#include <IO/JsonEntity.h>
+
+#include <string>
+
 namespace VoiceAsst
 {
 
-// TODO: declare OllamaClient (../guide/RECODE_CHECKLIST.md item 7).
+class OllamaClient
+{ // Not thread-safe: call every method from the same thread (the worker)
 
+	private:
+	/* Private member struct*/
+	struct CurlHandle // Owns a libcurl easy handle; frees it on destruction
+	{
+		void* curl; // A CURL*; curl.h defines CURL as void for client code
+
+		CurlHandle(void); // Creates the handle; throws std::runtime_error on failure
+		~CurlHandle(void); // Calls curl_easy_cleanup
+
+		private:
+		CurlHandle(const CurlHandle& source); // Prohibit copy constructor
+		CurlHandle& operator=(const CurlHandle& source); // Prohibit assignment
+	};
+
+	std::string baseUrl; // ex http://127.0.0.1:11434
+	std::string model; // ex qwen3:4b
+	double keepAlive; // How long Ollama keeps model loaded after a request, ex 30m
+	CurlHandle handle;
+	long timeoutMs;
+
+	long post(const char* path, const std::string& body, long requestTimeoutMs, std::string& response); // HTTP status, or -1 if Ollama couldn't be reached in time
+
+	public:
+	OllamaClient(const std::string& sBaseUrl, const std::string& sModel, double sKeepAlive, double sTimeout);
+
+	bool preload(void); // Loads the model into memory now, so the first real request doesn't pay for it
+	bool chat(const std::string& system, const std::string& user, IO::JsonPointer schema, std::string& reply); // reply = the model's JSON text; false if Ollama failed
+};
 }
 
 #endif

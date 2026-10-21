@@ -34,7 +34,7 @@ class SttEngine
 	{
 		VoskModel* model;
 
-		ModelHandle(const char* modelPath); // Loads the model; throws std::runtime_error on failure
+		ModelHandle(const char* modelPath, bool verbose); // Loads the model; throws std::runtime_error on failure
 		~ModelHandle(void); // Calls vosk_model_free
 
 		private:
@@ -60,11 +60,10 @@ class SttEngine
 	unsigned int channels; // Channel count of the current utterance, for mono mixdown in feed()
 
 	public:
-	SttEngine(const char* modelPath); // Loads the Vosk model from the given folder; throws std::runtime_error on failure
-	bool begin(unsigned int frameRate, unsigned int channels); // Starts a new utterance; false if the recognizer can't be created
+	SttEngine(const char* modelPath, bool verbose); // Loads the Vosk model from the given folder; throws std::runtime_error on failure
+	bool begin(unsigned int frameRate, unsigned int sChannels); // Starts a new utterance; false if the recognizer can't be created
 	void feed(const Misc::SInt16* samples, size_t numSamples); // Adds interleaved samples to the current utterance
 	std::string finish(void); // Ends the utterance and returns the text, or "" if nothing was recognized
-	//std::string transcribe(const std::vector<Misc::SInt16>& samples, unsigned int frameRate, unsigned int channels) const; // Returns the spoken text, or "" if nothing was recognized
 };
 
 }

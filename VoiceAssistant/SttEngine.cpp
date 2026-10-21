@@ -28,13 +28,13 @@ SttEngine::RecognizerHandle::~RecognizerHandle(void)
 		vosk_recognizer_free(recognizer);
 }
 
-SttEngine::ModelHandle::ModelHandle(const char* modelPath) :
-	model(vosk_model_new(modelPath))
+SttEngine::ModelHandle::ModelHandle(const char* modelPath, bool verbose) :
+	model(nullptr)
 {
+	vosk_set_log_level(verbose ? 0 : -1); // Must come before loading: the load is what prints the log. Applies to all of Vosk, not just this model
+	model = vosk_model_new(modelPath);
 	if (model == nullptr)
-	{
 		throw std::runtime_error(std::string("SttEngine: failed to load Vosk model from ") + modelPath);
-	}
 }
 
 SttEngine::ModelHandle::~ModelHandle(void)
@@ -42,15 +42,15 @@ SttEngine::ModelHandle::~ModelHandle(void)
 	vosk_model_free(model);
 }
 
-SttEngine::SttEngine(const char* modelPath) :
-	model(modelPath), channels(0)
+SttEngine::SttEngine(const char* modelPath, bool verbose) :
+	model(modelPath, verbose), channels(0)
 {
 }
 
-bool SttEngine::begin(unsigned int frameRate, unsigned int channels)
+bool SttEngine::begin(unsigned int frameRate, unsigned int sChannels)
 {
 	// Reject bad input
-	if (frameRate == 0 || channels == 0)
+	if (frameRate == 0 || sChannels == 0)
 		return false;
 
 	recognizer = new RecognizerHandle(model.model, float(frameRate));
@@ -62,7 +62,7 @@ bool SttEngine::begin(unsigned int frameRate, unsigned int channels)
 		return false;
 	}
 
-	this->channels = channels;
+	channels = sChannels;
 	return true;
 }
 
