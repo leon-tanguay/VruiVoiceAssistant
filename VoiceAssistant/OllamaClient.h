@@ -51,8 +51,8 @@ class OllamaClient
 	std::string baseUrl; // ex http://127.0.0.1:11434
 	std::string model; // ex qwen3:4b
 	double keepAlive; // How long Ollama keeps model loaded after a request, ex 30m
-	CurlHandle handle;
 	long timeoutMs;
+	CurlHandle handle;
 
 	long post(const char* path, const std::string& body, long requestTimeoutMs, std::string& response); // HTTP status, or -1 if Ollama couldn't be reached in time
 

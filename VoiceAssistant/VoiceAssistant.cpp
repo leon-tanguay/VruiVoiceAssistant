@@ -90,25 +90,7 @@ const char* getStateName(VoiceAssistant::AssistantState state)
 	return "Unknown";
 }
 
-GLColor<GLfloat, 4> VoiceAssistant::getStateColor(VoiceAssistant::AssistantState state) const
-{
-	switch (state)
-	{
-		case VoiceAssistant::Idle:
-			return GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f); // Transparent
-		case VoiceAssistant::Warmup:
-			return factory->warmupColor; // Dim grey: powering up
-		case VoiceAssistant::Listening:
-			return factory->listeningColor; // Yellow: actively listening
-		case VoiceAssistant::Thinking:
-			return factory->thinkingColor; // Blue: processing
-		case VoiceAssistant::Speaking:
-			return factory->speakingColor; // Green: responding
-		case VoiceAssistant::Error:
-			return factory->errorColor; // Intense red: error
-	}
-	return GLColor<GLfloat, 4>(1.0f, 1.0f, 1.0f); // Unreachable if every case handled, keeps compiler happy
-}
+int no_mic = 0;
 
 void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, int numHaloBands, const Scalar& opacity)
 {
@@ -320,16 +302,252 @@ void VoiceAssistant::VoiceAssistantTool::buttonCallback(int buttonSlotIndex, Inp
 	}
 }
 
+/******************************************
+Static elements of class VoiceAssistant:
+******************************************/
+VoiceAssistantFactory* VoiceAssistant::factory = nullptr;
+VoiceAssistant* VoiceAssistant::owner = nullptr;
+
 /*************************************
 Methods of class VoiceAssistant:
 *************************************/
 
+GLColor<GLfloat, 4> VoiceAssistant::getStateColor(VoiceAssistant::AssistantState state) const
+{
+	switch (state)
+	{
+		case VoiceAssistant::Idle:
+			return GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f); // Transparent
+		case VoiceAssistant::Warmup:
+			return factory->warmupColor; // Dim grey: powering up
+		case VoiceAssistant::Listening:
+			return factory->listeningColor; // Yellow: actively listening
+		case VoiceAssistant::Thinking:
+			return factory->thinkingColor; // Blue: processing
+		case VoiceAssistant::Speaking:
+			return factory->speakingColor; // Green: responding
+		case VoiceAssistant::Error:
+			return factory->errorColor; // Intense red: error
+	}
+	return GLColor<GLfloat, 4>(1.0f, 1.0f, 1.0f); // Unreachable if every case handled, keeps compiler happy
+}
+
+GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
+{
+	// Get the base color for the current state
+	GLColor<GLfloat, 4> targetColor = getStateColor(state);
+
+	GLColor<GLfloat, 4> oldColorCopy = transitionStartColor; // Make a copy of the transition start color to use for transition calculations
+	GLColor<GLfloat, 4> targetColorCopy = targetColor; // Make a copy of the target color to use for transition calculations
+
+	if (oldColorCopy[3] == 0.0f)
+	{
+		// If the transition start color is idle, set its color values to target
+		oldColorCopy[0] = targetColorCopy[0];
+		oldColorCopy[1] = targetColorCopy[1];
+		oldColorCopy[2] = targetColorCopy[2];
+	}
+
+	else if (targetColorCopy[3] == 0.0f)
+	{
+		// If the target color is idle, set its color values to the transition start color
+		targetColorCopy[0] = oldColorCopy[0];
+		targetColorCopy[1] = oldColorCopy[1];
+		targetColorCopy[2] = oldColorCopy[2];
+	}
+
+	// If we're in a transition, interpolate between the transition start color and the base color
+	if (time - stateStartTime < factory->stateTransitionDuration)
+	{
+		double t = (time - stateStartTime) / factory->stateTransitionDuration;
+		t = t * t * (3 - 2 * t); // Smoothstep interpolation
+
+		targetColorCopy[0] = static_cast<GLfloat>(oldColorCopy[0] + t * (targetColorCopy[0] - oldColorCopy[0]));
+		targetColorCopy[1] = static_cast<GLfloat>(oldColorCopy[1] + t * (targetColorCopy[1] - oldColorCopy[1]));
+		targetColorCopy[2] = static_cast<GLfloat>(oldColorCopy[2] + t * (targetColorCopy[2] - oldColorCopy[2]));
+		targetColorCopy[3] = static_cast<GLfloat>(oldColorCopy[3] + t * (targetColorCopy[3] - oldColorCopy[3]));
+	}
+
+	Scalar fade = 1.0;
+	if (state == VoiceAssistant::Listening && !userIsSpeaking)
+	{
+		fade = Math::max(0.0, Math::min(1.0, 1 - (getApplicationTime() - userFinishedSpeakingTime) / factory->listeningBufferDuration));
+	}
+	targetColorCopy[3] *= static_cast<GLfloat>(fade);
+
+	return targetColorCopy;
+}
+
+void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
+{
+	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
+
+	if (cbData.numFrames == 0)
+	{
+		return;
+	}
+
+	const size_t numSamples = cbData.numFrames * recordingChannels;
+
+	// Store the recorded samples in a thread-safe manner to be sent to voice recognition
+	{
+		Threads::MutexCond::Lock recordingLock(recordingCond);
+		recordedSamples.insert(recordedSamples.end(), samples, samples + numSamples);
+		recordingCond.signal(); // Wake sttThread: there is audio to feed
+	}
+
+	double sumSquares = 0.0;
+	for (size_t i = 0; i < numSamples; ++i)
+	{
+		double sample = samples[i];
+		sumSquares += sample * sample;
+	}
+
+	double rms = Math::sqrt(sumSquares / numSamples) / 32768.0; // Normalize to [-1, 1] range for 16-bit signed integer
+
+	// Atomic, read by frame() on main thread to set halo glow
+	micLevel = float(rms);
+}
+
+void* VoiceAssistant::sttThreadMethod(void)
+{
+	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
+
+	while (true)
+	{
+		bool start = false;
+		bool finish = false;
+		{
+			Threads::MutexCond::Lock lock(recordingCond);
+
+			// Waits till it gets a chunk
+			while (sttRunning && recordedSamples.empty() && !sttStartRequested && !sttFinishRequested)
+				recordingCond.wait(lock);
+
+			// Are we still listening?
+			if (!sttRunning)
+				break;
+
+			start = sttStartRequested;
+			sttStartRequested = false;
+			std::swap(chunk, recordedSamples);
+			finish = sttFinishRequested;
+			sttFinishRequested = false;
+		}
+
+		// Slow work, outside the lock, in order: start, feed, finish
+		if (start)
+			sttEngine->begin(recordingFrameRate, recordingChannels);
+		if (!chunk.empty())
+		{
+			sttEngine->feed(chunk.data(), chunk.size());
+			chunk.clear();
+		}
+		if (finish)
+		{
+			std::string text = sttEngine->finish();
+			Threads::MutexCond::Lock lock(recordingCond);
+			transcript = text;
+			transcriptReady = true;
+		}
+	}
+
+	return 0;
+}
+
+void VoiceAssistant::stopSttThread(void)
+{
+	if (!sttThread.isJoined())
+	{
+		{
+			Threads::MutexCond::Lock lock(recordingCond);
+			sttRunning = false;
+			recordingCond.broadcast();
+		}
+		sttThread.join();
+	}
+}
+
+// Console command to test state changes, for debugging or demonstration purposes
+// Called in console via "voiceAssistant.test <stateName>"
+// Syntax uses the state names defined in the AssistantState enum or letters
+void VoiceAssistant::testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
+{
+	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	if (!thisPtr->isActive())
+	{
+		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
+		return;
+	}
+	std::string stateArg(argumentBegin, argumentEnd);
+
+	AssistantState newState;
+	if (strcasecmp(stateArg.c_str(), "warmup") == 0 || strcasecmp(stateArg.c_str(), "w") == 0) // Not case sensitive
+		newState = Warmup;
+	else if (strcasecmp(stateArg.c_str(), "idle") == 0 || strcasecmp(stateArg.c_str(), "i") == 0)
+		newState = Idle;
+	else if (strcasecmp(stateArg.c_str(), "listening") == 0 || strcasecmp(stateArg.c_str(), "l") == 0)
+		newState = Listening;
+	else if (strcasecmp(stateArg.c_str(), "thinking") == 0 || strcasecmp(stateArg.c_str(), "t") == 0)
+		newState = Thinking;
+	else if (strcasecmp(stateArg.c_str(), "speaking") == 0 || strcasecmp(stateArg.c_str(), "s") == 0)
+		newState = Speaking;
+	else if (strcasecmp(stateArg.c_str(), "error") == 0 || strcasecmp(stateArg.c_str(), "e") == 0)
+		newState = Error;
+	else
+	{
+		Misc::formattedConsoleWarning("VoiceAssistant: unknown state \"%s\"", stateArg.c_str());
+		return;
+	}
+
+	thisPtr->applyState(newState);
+}
+
+// Called by the push-to-talk tool's button press, or by typing voiceAssistant.press in the console
+void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
+{
+	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	if (!thisPtr->isActive())
+	{
+		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
+		return;
+	}
+	// User can only talk when assistant is not busy (Idle, Speaking, or Error)
+	// Allow user to interrupt speaking because the last command will have already been executed
+	if (thisPtr->state != Idle && thisPtr->state != Speaking && thisPtr->state != Error)
+	{
+		Misc::formattedConsoleNote("VoiceAssistant: busy (%s), ignoring press", getStateName(thisPtr->state));
+		return;
+	}
+	thisPtr->applyState(Listening);
+	thisPtr->userIsSpeaking = true;
+}
+
+// Called by the push-to-talk tool's button release, or by typing voiceAssistant.release in the console
+void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
+{
+	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
+	if (!thisPtr->isActive())
+	{
+		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
+		return;
+	}
+
+	/* If it is still listening by time it is released,
+	start timer before it actually stops listening to input */
+	if (thisPtr->state == Listening)
+	{
+		thisPtr->userIsSpeaking = false;
+		thisPtr->userFinishedSpeakingTime = getApplicationTime();
+	}
+}
+
 VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) :
-	Vislet(), haloNode(new HaloNode(this)), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
-	transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)), recordingSoundContext(nullptr),
-	recordingFrameRate(0), recordingChannels(0),
-	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false),
-	micLevel(0.0f), smoothedMicLevel(0.0f)
+	Vislet(), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
+	haloNode(new HaloNode(this)), transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)),
+	micLevel(0.0f), smoothedMicLevel(0.0f),
+	recordingSoundContext(nullptr), recordingFrameRate(0), recordingChannels(0),
+	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false)
 {
 	if (owner == nullptr)
 	{
@@ -420,19 +638,6 @@ void VoiceAssistant::enable(bool startup)
 	Misc::consoleNote("VoiceAssistant: started");
 }
 
-void VoiceAssistant::stopSttThread(void)
-{
-	if (!sttThread.isJoined())
-	{
-		{
-			Threads::MutexCond::Lock lock(recordingCond);
-			sttRunning = false;
-			recordingCond.broadcast();
-		}
-		sttThread.join();
-	}
-}
-
 void VoiceAssistant::disable(bool shutdown)
 {
 	Misc::consoleNote("VoiceAssistant: stopping");
@@ -449,52 +654,6 @@ void VoiceAssistant::disable(bool shutdown)
 	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
 
 	Misc::consoleNote("VoiceAssistant: stopped");
-}
-
-GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
-{
-	// Get the base color for the current state
-	GLColor<GLfloat, 4> targetColor = getStateColor(state);
-
-	GLColor<GLfloat, 4> oldColorCopy = transitionStartColor; // Make a copy of the transition start color to use for transition calculations
-	GLColor<GLfloat, 4> targetColorCopy = targetColor; // Make a copy of the target color to use for transition calculations
-
-	if (oldColorCopy[3] == 0.0f)
-	{
-		// If the transition start color is idle, set its color values to target
-		oldColorCopy[0] = targetColorCopy[0];
-		oldColorCopy[1] = targetColorCopy[1];
-		oldColorCopy[2] = targetColorCopy[2];
-	}
-
-	else if (targetColorCopy[3] == 0.0f)
-	{
-		// If the target color is idle, set its color values to the transition start color
-		targetColorCopy[0] = oldColorCopy[0];
-		targetColorCopy[1] = oldColorCopy[1];
-		targetColorCopy[2] = oldColorCopy[2];
-	}
-
-	// If we're in a transition, interpolate between the transition start color and the base color
-	if (time - stateStartTime < factory->stateTransitionDuration)
-	{
-		double t = (time - stateStartTime) / factory->stateTransitionDuration;
-		t = t * t * (3 - 2 * t); // Smoothstep interpolation
-
-		targetColorCopy[0] = static_cast<GLfloat>(oldColorCopy[0] + t * (targetColorCopy[0] - oldColorCopy[0]));
-		targetColorCopy[1] = static_cast<GLfloat>(oldColorCopy[1] + t * (targetColorCopy[1] - oldColorCopy[1]));
-		targetColorCopy[2] = static_cast<GLfloat>(oldColorCopy[2] + t * (targetColorCopy[2] - oldColorCopy[2]));
-		targetColorCopy[3] = static_cast<GLfloat>(oldColorCopy[3] + t * (targetColorCopy[3] - oldColorCopy[3]));
-	}
-
-	Scalar fade = 1.0;
-	if (state == VoiceAssistant::Listening && !userIsSpeaking)
-	{
-		fade = Math::max(0.0, Math::min(1.0, 1 - (getApplicationTime() - userFinishedSpeakingTime) / factory->listeningBufferDuration));
-	}
-	targetColorCopy[3] *= static_cast<GLfloat>(fade);
-
-	return targetColorCopy;
 }
 
 void VoiceAssistant::frame(void)
@@ -644,156 +803,6 @@ void VoiceAssistant::applyState(AssistantState newState)
 	}
 }
 
-int no_mic = 0;
-
-void* VoiceAssistant::sttThreadMethod(void)
-{
-	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
-
-	while (true)
-	{
-		bool start = false;
-		bool finish = false;
-		{
-			Threads::MutexCond::Lock lock(recordingCond);
-			while (sttRunning && recordedSamples.empty() && !sttStartRequested && !sttFinishRequested)
-				recordingCond.wait(lock);
-
-			if (!sttRunning)
-				break;
-
-			start = sttStartRequested;
-			sttStartRequested = false;
-			std::swap(chunk, recordedSamples);
-			finish = sttFinishRequested;
-			sttFinishRequested = false;
-		}
-
-		// Slow work, outside the lock, in order: start, feed, finish
-		if (start)
-			sttEngine->begin(recordingFrameRate, recordingChannels);
-		if (!chunk.empty())
-		{
-			sttEngine->feed(chunk.data(), chunk.size());
-			chunk.clear();
-		}
-		if (finish)
-		{
-			std::string text = sttEngine->finish();
-			Threads::MutexCond::Lock lock(recordingCond);
-			transcript = text;
-			transcriptReady = true;
-		}
-	}
-
-	return 0;
-}
-
-void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
-{
-	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
-
-	if (cbData.numFrames == 0)
-	{
-		return;
-	}
-
-	const size_t numSamples = cbData.numFrames * recordingChannels;
-
-	// Store the recorded samples in a thread-safe manner to be sent to voice recognition
-	{
-		Threads::MutexCond::Lock recordingLock(recordingCond);
-		recordedSamples.insert(recordedSamples.end(), samples, samples + numSamples);
-		recordingCond.signal(); // Wake sttThread: there is audio to feed
-	}
-
-	double sumSquares = 0.0;
-	for (size_t i = 0; i < numSamples; ++i)
-	{
-		double sample = samples[i];
-		sumSquares += sample * sample;
-	}
-
-	double rms = Math::sqrt(sumSquares / numSamples) / 32768.0; // Normalize to [-1, 1] range for 16-bit signed integer
-
-	// Atomic, read by frame() on main thread to set halo glow
-	micLevel = float(rms);
-}
-
-// Console command to test state changes, for debugging or demonstration purposes
-// Called in console via "voiceAssistant.test <stateName>"
-// Syntax uses the state names defined in the AssistantState enum or letters
-void VoiceAssistant::testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
-{
-	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
-	if (!thisPtr->isActive())
-	{
-		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
-		return;
-	}
-	std::string stateArg(argumentBegin, argumentEnd);
-
-	AssistantState newState;
-	if (strcasecmp(stateArg.c_str(), "warmup") == 0 || strcasecmp(stateArg.c_str(), "w") == 0) // Not case sensitive
-		newState = Warmup;
-	else if (strcasecmp(stateArg.c_str(), "idle") == 0 || strcasecmp(stateArg.c_str(), "i") == 0)
-		newState = Idle;
-	else if (strcasecmp(stateArg.c_str(), "listening") == 0 || strcasecmp(stateArg.c_str(), "l") == 0)
-		newState = Listening;
-	else if (strcasecmp(stateArg.c_str(), "thinking") == 0 || strcasecmp(stateArg.c_str(), "t") == 0)
-		newState = Thinking;
-	else if (strcasecmp(stateArg.c_str(), "speaking") == 0 || strcasecmp(stateArg.c_str(), "s") == 0)
-		newState = Speaking;
-	else if (strcasecmp(stateArg.c_str(), "error") == 0 || strcasecmp(stateArg.c_str(), "e") == 0)
-		newState = Error;
-	else
-	{
-		Misc::formattedConsoleWarning("VoiceAssistant: unknown state \"%s\"", stateArg.c_str());
-		return;
-	}
-
-	thisPtr->applyState(newState);
-}
-
-// Called by the push-to-talk tool's button press, or by typing voiceAssistant.press in the console
-void VoiceAssistant::voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
-{
-	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
-	if (!thisPtr->isActive())
-	{
-		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
-		return;
-	}
-	// User can only talk when assistant is not busy (Idle, Speaking, or Error)
-	// Allow user to interrupt speaking because the last command will have already been executed
-	if (thisPtr->state != Idle && thisPtr->state != Speaking && thisPtr->state != Error)
-	{
-		Misc::formattedConsoleNote("VoiceAssistant: busy (%s), ignoring press", getStateName(thisPtr->state));
-		return;
-	}
-	thisPtr->applyState(Listening);
-	thisPtr->userIsSpeaking = true;
-}
-
-// Called by the push-to-talk tool's button release, or by typing voiceAssistant.release in the console
-void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData)
-{
-	VoiceAssistant* thisPtr = static_cast<VoiceAssistant*>(userData);
-	if (!thisPtr->isActive())
-	{
-		Misc::consoleNote("VoiceAssistant: disabled, ignoring command");
-		return;
-	}
-
-	/* If it is still listening by time it is released,
-	start timer before it actually stops listening to input */
-	if (thisPtr->state == Listening)
-	{
-		thisPtr->userIsSpeaking = false;
-		thisPtr->userFinishedSpeakingTime = getApplicationTime();
-	}
-}
-
 /*************************************
 Methods of class VoiceAssistantFactory:
 *************************************/
@@ -804,17 +813,18 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
 	haloMinPulse(0.3), haloMaxSizeListening(1.8),
 	haloFalloffListening(0.6),
-	listeningBufferDuration(0.3), stateTransitionDuration(0.5),
-	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16),
+	stateTransitionDuration(0.5),
 	warmupColor(GLColor<GLfloat, 4>(1.0f, 0.55f, 0.1f)), // Orange: powering up
 	listeningColor(GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f)), // Yellow: actively listening
 	thinkingColor(GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f)), // Blue: processing
 	speakingColor(GLColor<GLfloat, 4>(0.2f, 1.0f, 0.4f)), // Green: responding
 	errorColor(GLColor<GLfloat, 4>(1.0f, 0.05f, 0.05f)), // Intense red: error
-	printStateChanges(false),
-	sttVerbose(false),
+	listeningBufferDuration(0.3),
+	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16),
 	ollamaUrl("http://127.0.0.1:11434"), ollamaModel("qwen3:4b"),
 	ollamaKeepAlive(1800.0), ollamaTimeout(15.0),
+	printStateChanges(false),
+	sttVerbose(false),
 	dryRun(false)
 {
 	// Set vosk model path
@@ -823,7 +833,6 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 
 	// Load settings from the vislet's section in Vrui's configuration; the defaults above stay for any missing tag
 	Misc::ConfigurationFileSection cfs = visletManager.getVisletClassSection(getClassName());
-	cfs.updateValue("./voskModelPath", voskModelPath);
 	cfs.updateValue("./numHaloBands", numHaloBands);
 	cfs.updateValue("./haloThickness", haloThickness);
 	cfs.updateValue("./haloMaxAlpha", haloMaxAlpha);
@@ -832,26 +841,28 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./haloMinPulse", haloMinPulse);
 	cfs.updateValue("./haloMaxSizeListening", haloMaxSizeListening);
 	cfs.updateValue("./haloFalloffListening", haloFalloffListening);
-	cfs.updateValue("./listeningBufferDuration", listeningBufferDuration);
-	cfs.updateValue("./stateTransitionDuration", stateTransitionDuration);
-	cfs.updateValue("./micGain", micGain);
-	cfs.updateValue("./micLevelAttack", micLevelAttack);
-	cfs.updateValue("./micLevelRelease", micLevelRelease);
 
+	cfs.updateValue("./stateTransitionDuration", stateTransitionDuration);
 	cfs.updateValue("./warmupColor", warmupColor);
 	cfs.updateValue("./listeningColor", listeningColor);
 	cfs.updateValue("./thinkingColor", thinkingColor);
 	cfs.updateValue("./speakingColor", speakingColor);
 	cfs.updateValue("./errorColor", errorColor);
 
-	cfs.updateValue("./printStateChanges", printStateChanges);
+	cfs.updateValue("./listeningBufferDuration", listeningBufferDuration);
+	cfs.updateValue("./micGain", micGain);
+	cfs.updateValue("./micLevelAttack", micLevelAttack);
+	cfs.updateValue("./micLevelRelease", micLevelRelease);
 
-	cfs.updateValue("./sttVerbose", sttVerbose);
+	cfs.updateValue("./voskModelPath", voskModelPath);
 
 	cfs.updateValue("./ollamaUrl", ollamaUrl);
 	cfs.updateValue("./ollamaModel", ollamaModel);
 	cfs.updateValue("./ollamaKeepAlive", ollamaKeepAlive);
 	cfs.updateValue("./ollamaTimeout", ollamaTimeout);
+
+	cfs.updateValue("./printStateChanges", printStateChanges);
+	cfs.updateValue("./sttVerbose", sttVerbose);
 	cfs.updateValue("./dryRun", dryRun);
 
 	// Force alpha to 1 for all colors, so that the state fades are applied correctly in getHaloColor()
@@ -870,8 +881,8 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	haloMinPulse = Math::clamp(haloMinPulse, Scalar(0), Scalar(1));
 	haloMaxSizeListening = Math::max(haloMaxSizeListening, Scalar(1));
 	haloFalloffListening = Math::max(haloFalloffListening, Scalar(0.05));
-	listeningBufferDuration = Math::max(listeningBufferDuration, 0.01);
 	stateTransitionDuration = Math::max(stateTransitionDuration, 0.0);
+	listeningBufferDuration = Math::max(listeningBufferDuration, 0.01);
 	micGain = Math::max(micGain, Scalar(0));
 	micLevelAttack = Math::max(micLevelAttack, 0.001);
 	micLevelRelease = Math::max(micLevelRelease, 0.001);
@@ -931,11 +942,6 @@ extern "C" void destroyVoiceAssistantFactory(VisletFactory* factory)
 	delete factory;
 }
 
-/******************************************
-Static elements of class VoiceAssistant:
-******************************************/
-VoiceAssistantFactory* VoiceAssistant::factory = nullptr;
-VoiceAssistant* VoiceAssistant::owner = nullptr;
 }
 
 }

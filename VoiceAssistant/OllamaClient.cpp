@@ -49,26 +49,6 @@ IO::JsonPointer parseJson(const std::string& text) // Throws std::runtime_error 
 
 }
 
-OllamaClient::OllamaClient(const std::string& sBaseUrl, const std::string& sModel, double sKeepAlive, double sTimeout) :
-	baseUrl(sBaseUrl), model(sModel), keepAlive(sKeepAlive), timeoutMs(long(sTimeout * 1000.0))
-{
-}
-
-bool OllamaClient::preload(void)
-{
-	// A chat request with no messages makes Ollama load the model and return
-	IO::JsonObjectPointer request = new IO::JsonObject;
-	request->setProperty("model", model);
-	request->setProperty("keep_alive", keepAlive);
-	IO::JsonArrayPointer messages = new IO::JsonArray;
-	request->setProperty("messages", *messages);
-
-	std::ostringstream body;
-	body << *request;
-	std::string response;
-	return post("/api/chat", body.str(), 60000, response) == 200;
-}
-
 OllamaClient::CurlHandle::CurlHandle(void) :
 	curl(nullptr)
 {
@@ -112,6 +92,26 @@ long OllamaClient::post(const char* path, const std::string& body, long requestT
 	long status = 0;
 	curl_easy_getinfo(handle.curl, CURLINFO_RESPONSE_CODE, &status);
 	return status;
+}
+
+OllamaClient::OllamaClient(const std::string& sBaseUrl, const std::string& sModel, double sKeepAlive, double sTimeout) :
+	baseUrl(sBaseUrl), model(sModel), keepAlive(sKeepAlive), timeoutMs(long(sTimeout * 1000.0))
+{
+}
+
+bool OllamaClient::preload(void)
+{
+	// A chat request with no messages makes Ollama load the model and return
+	IO::JsonObjectPointer request = new IO::JsonObject;
+	request->setProperty("model", model);
+	request->setProperty("keep_alive", keepAlive);
+	IO::JsonArrayPointer messages = new IO::JsonArray;
+	request->setProperty("messages", *messages);
+
+	std::ostringstream body;
+	body << *request;
+	std::string response;
+	return post("/api/chat", body.str(), 60000, response) == 200;
 }
 
 bool OllamaClient::chat(const std::string& system, const std::string& user, IO::JsonPointer schema, std::string& reply)

@@ -17,17 +17,6 @@ SttEngine - See SttEngine.h.
 namespace VoiceAsst
 {
 
-SttEngine::RecognizerHandle::RecognizerHandle(VoskModel* model, float sampleRate) :
-	recognizer(vosk_recognizer_new(model, sampleRate))
-{
-}
-
-SttEngine::RecognizerHandle::~RecognizerHandle(void)
-{
-	if (recognizer != nullptr)
-		vosk_recognizer_free(recognizer);
-}
-
 SttEngine::ModelHandle::ModelHandle(const char* modelPath, bool verbose) :
 	model(nullptr)
 {
@@ -40,6 +29,17 @@ SttEngine::ModelHandle::ModelHandle(const char* modelPath, bool verbose) :
 SttEngine::ModelHandle::~ModelHandle(void)
 {
 	vosk_model_free(model);
+}
+
+SttEngine::RecognizerHandle::RecognizerHandle(VoskModel* model, float sampleRate) :
+	recognizer(vosk_recognizer_new(model, sampleRate))
+{
+}
+
+SttEngine::RecognizerHandle::~RecognizerHandle(void)
+{
+	if (recognizer != nullptr)
+		vosk_recognizer_free(recognizer);
 }
 
 SttEngine::SttEngine(const char* modelPath, bool verbose) :

@@ -204,23 +204,30 @@ class VoiceAssistant : public Vislet
 
 	/* Elements: */
 	private:
-	class HaloNode; // Scene graph node rendering the halo
-	Misc::Autopointer<HaloNode> haloNode; // The halo node; added to the physical scene graph while the vislet is enabled
-	Misc::SelfDestructPointer<VoiceAsst::SttEngine> sttEngine; // Speech-to-text engine, created in enable()
-
 	static VoiceAssistantFactory* factory;
 	static VoiceAssistant* owner; // The one and only VoiceAssistant instance, if any, that is currently enabled (the one that owns the tool)
 
+	// State machine
 	AssistantState state;
 	double stateStartTime;
 	bool userIsSpeaking;
 	double userFinishedSpeakingTime;
-	GLColor<GLfloat, 4> transitionStartColor;
-	SoundContext* recordingSoundContext;
 
+	// Halo
+	class HaloNode; // Scene graph node rendering the halo
+	Misc::Autopointer<HaloNode> haloNode; // The halo node; added to the physical scene graph while the vislet is enabled
+	GLColor<GLfloat, 4> transitionStartColor;
+	std::atomic<float> micLevel;
+	float smoothedMicLevel;
+
+	// Microphone
+	SoundContext* recordingSoundContext;
 	Misc::Autopointer<SoundContext::RecordingCallback> micCallback;
 	unsigned int recordingFrameRate;
 	unsigned int recordingChannels;
+
+	// Speech-to-text
+	Misc::SelfDestructPointer<VoiceAsst::SttEngine> sttEngine; // Speech-to-text engine, created in enable()
 	Threads::Thread sttThread; // Feeds the microphone to Vosk while the user talks
 	Threads::MutexCond recordingCond; // Guards everything below and wakes sttThread
 	std::vector<Misc::SInt16> recordedSamples; // Mic samples not yet fed to Vosk
@@ -230,19 +237,21 @@ class VoiceAssistant : public Vislet
 	bool transcriptReady; // sttThread has put a result in transcript
 	std::string transcript; // Last finished utterance's text
 
-	std::atomic<float> micLevel;
-	float smoothedMicLevel;
-
 	/* Private methods: */
 	private:
+	// Halo
 	GLColor<GLfloat, 4> getStateColor(VoiceAssistant::AssistantState state) const;
 	GLColor<GLfloat, 4> getHaloColor(double time) const; // Returns the current halo color, including any transition fade
+
+	// Microphone and speech-to-text
+	void micCallbackMethod(const SoundContext::RecordingCallbackData& cbData);
+	void* sttThreadMethod(void); // Runs on sttThread: waits for audio and feeds it to Vosk, publishes transcript when an utterance finishes
+	void stopSttThread(void); // Main thread: tells sttThread to exit and waits for it; does nothing if it isn't running
+
+	// Console commands
 	static void testCommandCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantPressCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
 	static void voiceAssistantReleaseCallback(const char* argumentBegin, const char* argumentEnd, void* userData);
-	void* sttThreadMethod(void); // Runs on sttThread: waits for audio and feeds it to Vosk, publishes transcript when an utterance finishes
-	void stopSttThread(void); // Main thread: tells sttThread to exit and waits for it; does nothing if it isn't running
-	void micCallbackMethod(const SoundContext::RecordingCallbackData& cbData);
 
 	/* Constructors and destructors: */
 	public:
@@ -265,8 +274,7 @@ class VoiceAssistantFactory : public VisletFactory
 
 	/* Elements: */
 	private:
-	std::string voskModelPath; // Folder of the Vosk speech recognition model
-
+	// Halo shape and motion
 	int numHaloBands; // Gradient steps per edge; more = smoother (1..256)
 	Scalar haloThickness; // Glow depth, as a fraction of the shorter visible screen side (0..0.5)
 	Scalar haloMaxAlpha; // Glow brightness at the screen edge (0..1)
@@ -275,25 +283,33 @@ class VoiceAssistantFactory : public VisletFactory
 	Scalar haloMinPulse; // Lowest brightness while breathing or listening (0..1)
 	Scalar haloMaxSizeListening; // Glow size at full voice; 1 = no growth (>=1)
 	Scalar haloFalloffListening; // Fade at full voice; lower = glow spreads further inward (>0)
-	double listeningBufferDuration; // Extra listening time after push-to-talk is released, in seconds (>0)
+
+	// State colors and transitions
 	double stateTransitionDuration; // color/fade time between states, in seconds; 0 = instant (>=0)
-	Scalar micGain; // Mic loudness multiplier; higher = full glow at a quieter voice (>=0)
-	double micLevelAttack; // How quickly the glow rises with your voice, in seconds (>0)
-	double micLevelRelease; // How quickly the glow falls in pauses, in seconds (>0)
 	GLColor<GLfloat, 4> warmupColor; // Glow color while warming up (alpha is forced to 1)
 	GLColor<GLfloat, 4> listeningColor; // Glow color while listening (alpha is forced to 1)
 	GLColor<GLfloat, 4> thinkingColor; // Glow color while thinking (alpha is forced to 1)
 	GLColor<GLfloat, 4> speakingColor; // Glow color while speaking (alpha is forced to 1)
 	GLColor<GLfloat, 4> errorColor; // Glow color on error (alpha is forced to 1)
-	bool printStateChanges;
 
-	bool sttVerbose; // Print Vosk/Kaldi's own log output (useful when a model fails to load)
+	// Microphone and listening
+	double listeningBufferDuration; // Extra listening time after push-to-talk is released, in seconds (>0)
+	Scalar micGain; // Mic loudness multiplier; higher = full glow at a quieter voice (>=0)
+	double micLevelAttack; // How quickly the glow rises with your voice, in seconds (>0)
+	double micLevelRelease; // How quickly the glow falls in pauses, in seconds (>0)
 
+	// Speech-to-text
+	std::string voskModelPath; // Folder of the Vosk speech recognition model
+
+	// Ollama
 	std::string ollamaUrl; // Default is local, but model could for example run on another machine
 	std::string ollamaModel; // Which Ollama model are we running (e.g. "qwen3:4b", alternative "phi4-mini")
 	double ollamaKeepAlive; // Seconds; any negative value means "keep loaded forever", normalized to -1
 	double ollamaTimeout; // Seconds; Bigger model or slower machine needs more time
 
+	// Debugging
+	bool printStateChanges;
+	bool sttVerbose; // Print Vosk/Kaldi's own log output (useful when a model fails to load)
 	bool dryRun; //	Log the command but don’t run it, for safely testing prompts
 
 	/* Constructors and destructors: */
