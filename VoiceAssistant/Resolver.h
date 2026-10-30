@@ -26,10 +26,45 @@ guess one, per DEPENDENCIES.md's own §12 lesson).
 #ifndef VOICEASSISTANT_RESOLVER_INCLUDED
 #define VOICEASSISTANT_RESOLVER_INCLUDED
 
+#include <string>
+
 namespace VoiceAsst
 {
 
-// TODO: declare Resolver (../guide/RECODE_CHECKLIST.md item 9).
+class CommandCatalog;
+class OllamaClient;
+
+struct Resolution
+{ // Ollama prompt output
+
+	// What type of response?
+	enum Kind
+	{
+		Nothing,
+		RunCommand,
+		Answer,
+		Clarify
+	};
+
+	Kind kind = Nothing;
+	std::string command;
+	std::string args;
+	std::string speak; // What should tts say to user
+};
+
+class Resolver
+{
+	/* Elements: */
+	private:
+	OllamaClient& client; // Reference to Ollama client
+
+	/* Constructors and destructors: */
+	public:
+	Resolver(OllamaClient& sClient);
+
+	/* Methods: */
+	bool resolve(const CommandCatalog& catalog, const std::string& transcript, Resolution& result);
+};
 
 }
 

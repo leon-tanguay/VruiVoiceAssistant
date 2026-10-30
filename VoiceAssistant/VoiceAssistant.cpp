@@ -43,6 +43,8 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <Vrui/Vrui.h>
 #include <Vrui/VRWindow.h>
 
+#include "OllamaClient.h"
+
 namespace Vrui
 {
 
@@ -413,6 +415,27 @@ void* VoiceAssistant::sttThreadMethod(void)
 {
 	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
 
+	// OllamaClient isn't thread-safe, so it lives and is used only on this thread
+	Misc::SelfDestructPointer<VoiceAsst::OllamaClient> ollama;
+	try
+	{
+		ollama = new VoiceAsst::OllamaClient(factory->ollamaUrl, factory->ollamaModel, factory->ollamaKeepAlive, factory->ollamaTimeout);
+	}
+	catch (const std::runtime_error& err)
+	{
+		Misc::formattedConsoleError("VoiceAssistant: Ollama unavailable: %s", err.what());
+	}
+	if (ollama.isValid())
+	{
+		if (ollama->preload())
+			Misc::formattedConsoleNote("VoiceAssistant: loaded %s", factory->ollamaModel.c_str());
+		else
+			Misc::formattedConsoleWarning("VoiceAssistant: could not load %s from %s; is \"ollama serve\" running and the model pulled?",
+				factory->ollamaModel.c_str(), factory->ollamaUrl.c_str());
+	}
+
+	VoiceAsst::CommandCatalog catalog; // This utterance's command list, copied from pendingCatalog
+
 	while (true)
 	{
 		bool start = false;
@@ -430,6 +453,7 @@ void* VoiceAssistant::sttThreadMethod(void)
 
 			start = sttStartRequested;
 			sttStartRequested = false;
+			if (start) catalog = pendingCatalog;
 			std::swap(chunk, recordedSamples);
 			finish = sttFinishRequested;
 			sttFinishRequested = false;
@@ -446,8 +470,19 @@ void* VoiceAssistant::sttThreadMethod(void)
 		if (finish)
 		{
 			std::string text = sttEngine->finish();
+
+			// Ask Ollama what to do; slow, so outside the lock
+			VoiceAsst::Resolution result;
+			if (ollama.isValid())
+			{
+				VoiceAsst::Resolver resolver(*ollama);
+				if (!resolver.resolve(catalog, text, result))
+					Misc::consoleWarning("VoiceAssistant: Ollama failed or gave an unreadable reply");
+			}
+
 			Threads::MutexCond::Lock lock(recordingCond);
 			transcript = text;
+			resolution = result;
 			transcriptReady = true;
 		}
 	}
@@ -662,19 +697,41 @@ void VoiceAssistant::frame(void)
 
 	// Pick up a finished transcript from sttThread, if there is one
 	std::string heard;
+	VoiceAsst::Resolution decided;
+
 	bool haveTranscript = false;
 	{
 		Threads::MutexCond::Lock lock(recordingCond);
 		if (transcriptReady)
 		{
 			heard = transcript;
+
 			transcriptReady = false;
 			haveTranscript = true;
+
+			decided = resolution;
 		}
 	}
 	if (haveTranscript && state == Thinking)
 	{
 		Misc::formattedConsoleNote("VoiceAssistant: heard \"%s\"", heard.c_str());
+
+		const char* const kindNames[] = {"nothing", "command", "answer", "clarify"};
+		Misc::formattedConsoleNote("VoiceAssistant: kind=%s command=%s args=\"%s\" speak=\"%s\"",
+			kindNames[decided.kind], decided.command.c_str(), decided.args.c_str(), decided.speak.c_str());
+
+		// Thinking ends when Ollama's decision arrives
+		switch (decided.kind)
+		{
+			case VoiceAsst::Resolution::Answer:
+			case VoiceAsst::Resolution::Clarify:
+				applyState(Speaking); // There's text to say (TTS comes in Milestone E)
+				break;
+			case VoiceAsst::Resolution::RunCommand:
+			case VoiceAsst::Resolution::Nothing:
+				applyState(Idle); // Commands run here in Milestone C
+				break;
+		}
 	}
 
 	// FAKE PIPELINE FOR TESTING ONLY, until the real voice pipeline exists:
@@ -684,7 +741,6 @@ void VoiceAssistant::frame(void)
 	const double warmupDuration = 3;
 	if (state == Warmup && elapsed >= warmupDuration) applyState(Idle);
 
-	const double thinkingDuration = 3; // Seconds before Thinking auto-advances to Speaking
 	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
 
 	const double errorDuration = 1; // Seconds before Error auto-advances to Idle
@@ -701,9 +757,7 @@ void VoiceAssistant::frame(void)
 		double elaspedSinceUserFinishedSpeaking = getApplicationTime() - userFinishedSpeakingTime;
 		if (elaspedSinceUserFinishedSpeaking >= factory->listeningBufferDuration) applyState(Thinking);
 	}
-	else if (state == Thinking && elapsed >= thinkingDuration)
-		applyState(Speaking);
-	else if (state == Speaking && elapsed >= speakingDuration)
+	else if (state == Speaking && getApplicationTime() - stateStartTime >= speakingDuration)
 		applyState(Idle);
 	else if (state == Error && elapsed >= errorDuration)
 		applyState(Idle);
@@ -780,6 +834,7 @@ void VoiceAssistant::applyState(AssistantState newState)
 					{
 						Threads::MutexCond::Lock lock(recordingCond);
 						recordedSamples.clear();
+						pendingCatalog.fillCommands(getCommandDispatcher()); // Main thread only: the dispatcher isn't thread-safe
 						sttStartRequested = true;
 						sttFinishRequested = false;
 						transcriptReady = false;

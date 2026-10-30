@@ -124,8 +124,6 @@ practice with a new Vrui class, not required for correctness.
 #include <Misc/SelfDestructPointer.h>
 #include <Misc/SizedTypes.h>
 
-#include "SttEngine.h"
-
 #include <Threads/MutexCond.h>
 #include <Threads/Thread.h>
 
@@ -135,6 +133,10 @@ practice with a new Vrui class, not required for correctness.
 #include <Vrui/Types.h>
 #include <Vrui/Vislet.h>
 #include <Vrui/UtilityTool.h>
+
+#include "SttEngine.h"
+#include "CommandCatalog.h"
+#include "Resolver.h"
 
 /* Forward declarations: */
 
@@ -236,6 +238,8 @@ class VoiceAssistant : public Vislet
 	bool sttFinishRequested; // Main thread wants the current utterance finished
 	bool transcriptReady; // sttThread has put a result in transcript
 	std::string transcript; // Last finished utterance's text
+	VoiceAsst::CommandCatalog pendingCatalog; // Command list snapshot taken on press; sttThread copies it
+	VoiceAsst::Resolution resolution; // Ollama's decision for the last finished utterance
 
 	/* Private methods: */
 	private:

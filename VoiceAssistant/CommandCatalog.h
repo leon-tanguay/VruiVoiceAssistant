@@ -24,6 +24,7 @@ namespace Misc
 class CommandDispatcher;
 
 }
+
 namespace VoiceAsst
 {
 
