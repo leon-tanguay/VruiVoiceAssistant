@@ -453,10 +453,7 @@ void* VoiceAssistant::sttThreadMethod(void)
 		if (preloadResult == 200)
 		{
 			Misc::formattedConsoleNote("VoiceAssistant: loaded %s", factory->ollamaModel.c_str());
-			{
-				Threads::MutexCond::Lock lock(recordingCond);
-				result = LlmSuccess;
-			}
+			result = LlmSuccess;
 		}
 		else
 		{
