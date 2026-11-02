@@ -640,13 +640,15 @@ void VoiceAssistant::enable(bool startup)
 		Misc::consoleNote("VoiceAssistant: starting...");
 		try
 		{
-			auto recordingSoundContext = getRecordingSoundContext();
+			const Vrui::SoundContext* recordingSoundContext = getRecordingSoundContext();
 			if (!recordingSoundContext)
 			{
 				Misc::consoleWarning("VoiceAssistant: no recording sound context available, microphone disabled");
 				applyState(Error);
-
-				auto format = recordingSoundContext->getRecordingFormat();
+			}
+			else
+			{
+				const Sound::SoundDataFormat& format = recordingSoundContext->getRecordingFormat();
 				if (format.bytesPerSample != sizeof(Misc::SInt16))
 				{
 					Misc::formattedConsoleWarning("VoiceAssistant: unsupported microphone format (%d bytes/sample, need 16-bit)",
@@ -700,7 +702,6 @@ void VoiceAssistant::disable(bool shutdown)
 
 	if (owner != this) return;
 
-	getSceneGraphManager()->removePhysicalNode(*haloNode);
 	userIsSpeaking = false;
 	applyState(Idle);
 
@@ -708,6 +709,7 @@ void VoiceAssistant::disable(bool shutdown)
 	if (shutdown)
 	{
 		Misc::consoleNote("VoiceAssistant: stopping...");
+		getSceneGraphManager()->removePhysicalNode(*haloNode);
 		stopSttThread();
 		Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
 		Misc::consoleNote("VoiceAssistant: stopped");

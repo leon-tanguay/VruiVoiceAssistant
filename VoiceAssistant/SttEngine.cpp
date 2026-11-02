@@ -50,7 +50,7 @@ SttEngine::SttEngine(const char* modelPath, bool verbose, unsigned int frameRate
 }
 
 // Starts a new utterance, resetting the recognizer
-void SttEngine::begin()
+void SttEngine::begin(void)
 {
 	vosk_recognizer_reset(recognizer.recognizer);
 }
