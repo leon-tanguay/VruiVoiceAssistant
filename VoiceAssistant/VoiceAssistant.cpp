@@ -51,26 +51,17 @@ namespace Vrui
 namespace Vislets
 {
 
-/*************************************
-Used for the halo glow on the edges of the screen
-*************************************/
-typedef Geometry::Point<Scalar, 2> Point2; // A point on the screen plane, in screen coordinates
-typedef Geometry::Vector<Scalar, 2> Vector2; // A direction on the screen plane
-
-struct ScreenCorner
+namespace
 {
-	Point2 position; // Position of the corner in screen coordinates
-	Vector2 inward; // Direction from the corner toward the center of the screen, in screen coordinates
-
-	ScreenCorner(const Point2& sPosition, const Vector2& sInward) :
-		position(sPosition), inward(sInward)
-	{
-	}
-};
-
 /*************************************
 Local functions of the c++ file
 *************************************/
+
+int getPulseNumber(double time, double pulseSpeed)
+{
+	// Which pulse we're in, counted since Vrui started; -0.75 shifts the count so it ticks over at each trough (wave = 0) instead of mid-pulse
+	return int(Math::floor(time * pulseSpeed - 0.75));
+}
 
 const char* getStateName(VoiceAssistant::AssistantState state)
 {
@@ -92,7 +83,22 @@ const char* getStateName(VoiceAssistant::AssistantState state)
 	return "Unknown";
 }
 
-int no_mic = 0;
+/*************************************
+Used for the halo glow on the edges of the screen
+*************************************/
+typedef Geometry::Point<Scalar, 2> Point2; // A point on the screen plane, in screen coordinates
+typedef Geometry::Vector<Scalar, 2> Vector2; // A direction on the screen plane
+
+struct ScreenCorner
+{
+	Point2 position; // Position of the corner in screen coordinates
+	Vector2 inward; // Direction from the corner toward the center of the screen, in screen coordinates
+
+	ScreenCorner(const Point2& sPosition, const Vector2& sInward) :
+		position(sPosition), inward(sInward)
+	{
+	}
+};
 
 void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCorner, const ScreenCorner& endCorner, const Scalar& haloWidth, const Scalar& haloFalloff, int numHaloBands, const Scalar& opacity)
 {
@@ -112,6 +118,7 @@ void drawEdgeGlow(const GLColor<GLfloat, 4>& color, const ScreenCorner& startCor
 	glEnd();
 }
 
+} // anonymous namespace
 /*******************************************
 Definition of class VoiceAssistant::HaloNode:
 *******************************************/
@@ -204,8 +211,15 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	else
 	{
 		// Idle breathing between the floor and full strength
-		const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * elapsed * settings->haloPulseSpeed);
+		const Scalar wave = 0.5 + 0.5 * Math::sin(2.0 * Math::Constants<Scalar>::pi * getApplicationTime() * settings->haloPulseSpeed);
 		strength = settings->haloMinPulse + (1 - settings->haloMinPulse) * wave;
+
+		int pulse = getPulseNumber(getApplicationTime(), settings->haloPulseSpeed);
+		if (pulse == voiceAssistant->boostedPulse)
+		{
+			// First full pulse after a state change (chosen in applyState): scale its size with the wave so it starts and ends at a trough
+			sizeScale = 1 + (settings->haloMaxSizeFirstPulse - 1) * wave;
+		}
 	}
 
 	// Grow with the voice, but never past half the visible area (opposite edges would overlap)
@@ -587,7 +601,7 @@ void VoiceAssistant::voiceAssistantReleaseCallback(const char* argumentBegin, co
 VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) :
 	Vislet(), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
 	haloNode(new HaloNode(this)), transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)),
-	micLevel(0.0f), smoothedMicLevel(0.0f),
+	micLevel(0.0f), smoothedMicLevel(0.0f), boostedPulse(0), recordingFrameRate(0), recordingChannels(0),
 	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false)
 {
 	if (owner == nullptr)
@@ -823,9 +837,9 @@ void VoiceAssistant::applyState(AssistantState newState)
 		// Entering listening, enable mic
 		if (newState == Listening)
 		{
-			if (recordingSoundContext == nullptr)
+			if (recordingSoundContext == nullptr || !sttEngine.isValid())
 			{
-				// No microphone available
+				// No microphone, or the speech engine failed to load in enable() (which logged the reason)
 				Misc::consoleWarning("VoiceAssistant: no microphone available");
 				newState = Error;
 			}
@@ -866,6 +880,12 @@ void VoiceAssistant::applyState(AssistantState newState)
 		transitionStartColor = getHaloColor(getApplicationTime());
 		state = newState;
 		stateStartTime = getApplicationTime();
+		int currentPulse = getPulseNumber(stateStartTime, factory->haloPulseSpeed);
+		if (boostedPulse != currentPulse)
+		{
+			boostedPulse = currentPulse + 1; // Boost the next full pulse; if the boosted pulse is already playing, let it finish instead
+		}
+
 		// Use Vrui message logger to log state change without need for std::string
 		if (factory->printStateChanges)
 		{
@@ -883,7 +903,7 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	numHaloBands(24),
 	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
 	haloMinPulse(0.3), haloMaxSizeListening(1.8),
-	haloFalloffListening(0.6),
+	haloFalloffListening(0.6), haloMaxSizeFirstPulse(1.3),
 	stateTransitionDuration(0.5),
 	warmupColor(GLColor<GLfloat, 4>(1.0f, 0.55f, 0.1f)), // Orange: powering up
 	listeningColor(GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f)), // Yellow: actively listening
@@ -912,7 +932,7 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./haloMinPulse", haloMinPulse);
 	cfs.updateValue("./haloMaxSizeListening", haloMaxSizeListening);
 	cfs.updateValue("./haloFalloffListening", haloFalloffListening);
-
+	cfs.updateValue("./haloMaxSizeFirstPulse", haloMaxSizeFirstPulse);
 	cfs.updateValue("./stateTransitionDuration", stateTransitionDuration);
 	cfs.updateValue("./warmupColor", warmupColor);
 	cfs.updateValue("./listeningColor", listeningColor);
@@ -952,6 +972,7 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	haloMinPulse = Math::clamp(haloMinPulse, Scalar(0), Scalar(1));
 	haloMaxSizeListening = Math::max(haloMaxSizeListening, Scalar(1));
 	haloFalloffListening = Math::max(haloFalloffListening, Scalar(0.05));
+	haloMaxSizeFirstPulse = Math::clamp(haloMaxSizeFirstPulse, Scalar(1), Scalar(3));
 	stateTransitionDuration = Math::max(stateTransitionDuration, 0.0);
 	listeningBufferDuration = Math::max(listeningBufferDuration, 0.01);
 	micGain = Math::max(micGain, Scalar(0));

@@ -221,6 +221,7 @@ class VoiceAssistant : public Vislet
 	GLColor<GLfloat, 4> transitionStartColor;
 	std::atomic<float> micLevel;
 	float smoothedMicLevel;
+	int boostedPulse; // The next pulse to be boosted by a state change
 
 	// Microphone
 	Misc::Autopointer<SoundContext::RecordingCallback> micCallback;
@@ -289,6 +290,7 @@ class VoiceAssistantFactory : public VisletFactory
 	Scalar haloMinPulse; // Lowest brightness while breathing or listening (0..1)
 	Scalar haloMaxSizeListening; // Glow size at full voice; 1 = no growth (>=1)
 	Scalar haloFalloffListening; // Fade at full voice; lower = glow spreads further inward (>0)
+	Scalar haloMaxSizeFirstPulse; // Glow size at the peak of the first full pulse after each state change; 1 = no growth (1..3)
 
 	// State colors and transitions
 	double stateTransitionDuration; // color/fade time between states, in seconds; 0 = instant (>=0)
