@@ -152,9 +152,9 @@ const char* VoiceAssistant::HaloNode::getClassName(void) const
 void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderState) const
 {
 	const VoiceAssistantFactory* settings = voiceAssistant->factory;
-	const double elapsed = getApplicationTime() - voiceAssistant->stateStartTime;
+	const double elapsedInCurrentState = getApplicationTime() - voiceAssistant->stateStartTime;
 	// Don't draw anything in idle state
-	if (voiceAssistant->state == VoiceAssistant::Idle && elapsed > settings->stateTransitionDuration) return;
+	if (voiceAssistant->state == VoiceAssistant::Idle && elapsedInCurrentState > settings->stateTransitionDuration) return;
 
 	GLColor<GLfloat, 4> color = voiceAssistant->getHaloColor(getApplicationTime());
 
@@ -436,6 +436,7 @@ void* VoiceAssistant::sttThreadMethod(void)
 
 	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
 
+	LLMStatus result = LlmError;
 	// OllamaClient isn't thread-safe, so it lives and is used only on this thread
 	Misc::SelfDestructPointer<VoiceAsst::OllamaClient> ollama;
 	try
@@ -448,11 +449,38 @@ void* VoiceAssistant::sttThreadMethod(void)
 	}
 	if (ollama.isValid())
 	{
-		if (ollama->preload())
+		long preloadResult = ollama->preload();
+		if (preloadResult == 200)
+		{
 			Misc::formattedConsoleNote("VoiceAssistant: loaded %s", factory->ollamaModel.c_str());
+			{
+				Threads::MutexCond::Lock lock(recordingCond);
+				result = LlmSuccess;
+			}
+		}
 		else
-			Misc::formattedConsoleWarning("VoiceAssistant: could not load %s from %s; is \"ollama serve\" running and the model pulled?",
-				factory->ollamaModel.c_str(), factory->ollamaUrl.c_str());
+		{
+			if (preloadResult == -1)
+			{
+				Misc::formattedConsoleError("VoiceAssistant: Ollama isn't reachable at %s; run 'ollama serve'",
+					factory->ollamaUrl.c_str());
+			}
+			else if (preloadResult == 404)
+			{
+				Misc::formattedConsoleError("VoiceAssistant: model %s isn't pulled; run 'ollama pull %s'",
+					factory->ollamaModel.c_str(), factory->ollamaModel.c_str());
+			}
+			else
+			{
+				Misc::formattedConsoleError("VoiceAssistant: could not load %s from %s (HTTP %ld)",
+					factory->ollamaModel.c_str(), factory->ollamaUrl.c_str(), preloadResult);
+			}
+		}
+	}
+
+	{
+		Threads::MutexCond::Lock lock(recordingCond);
+		llmStatus = result; // Publish the preload result; frame() polls this to end Warmup (no signal needed, nothing waits on it)
 	}
 
 	VoiceAsst::CommandCatalog catalog; // This utterance's command list, copied from pendingCatalog
@@ -493,17 +521,17 @@ void* VoiceAssistant::sttThreadMethod(void)
 			std::string text = sttEngine->finish();
 
 			// Ask Ollama what to do; slow, so outside the lock
-			VoiceAsst::Resolution result;
+			VoiceAsst::Resolution ollamaResolution;
 			if (ollama.isValid())
 			{
 				VoiceAsst::Resolver resolver(*ollama);
-				if (!resolver.resolve(catalog, text, result))
+				if (!resolver.resolve(catalog, text, ollamaResolution))
 					Misc::consoleWarning("VoiceAssistant: Ollama failed or gave an unreadable reply");
 			}
 
 			Threads::MutexCond::Lock lock(recordingCond);
 			transcript = text;
-			resolution = result;
+			resolution = ollamaResolution;
 			transcriptReady = true;
 		}
 	}
@@ -602,7 +630,7 @@ VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) 
 	Vislet(), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
 	haloNode(new HaloNode(this)), transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)),
 	micLevel(0.0f), smoothedMicLevel(0.0f), boostedPulse(0), recordingFrameRate(0), recordingChannels(0),
-	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false)
+	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false), llmStatus(LlmPending)
 {
 	if (owner == nullptr)
 	{
@@ -658,7 +686,6 @@ void VoiceAssistant::enable(bool startup)
 			if (!recordingSoundContext)
 			{
 				Misc::consoleWarning("VoiceAssistant: no recording sound context available, microphone disabled");
-				applyState(Error);
 			}
 			else
 			{
@@ -667,7 +694,6 @@ void VoiceAssistant::enable(bool startup)
 				{
 					Misc::formattedConsoleWarning("VoiceAssistant: unsupported microphone format (%d bytes/sample, need 16-bit)",
 						int(format.bytesPerSample));
-					applyState(Error);
 				}
 				else
 				{
@@ -688,6 +714,7 @@ void VoiceAssistant::enable(bool startup)
 			// Start the speech-to-text thread, if there is an engine for it to drive
 			{
 				Threads::MutexCond::Lock lock(recordingCond);
+				llmStatus = LlmPending;
 				sttRunning = true;
 			}
 
@@ -732,11 +759,14 @@ void VoiceAssistant::disable(bool shutdown)
 
 void VoiceAssistant::frame(void)
 {
-	double elapsed = getApplicationTime() - stateStartTime;
+	double elapsedInCurrentState = getApplicationTime() - stateStartTime;
+	AssistantState nextState = state; // Default: stay in the same state
 
 	// Pick up a finished transcript from sttThread, if there is one
 	std::string heard;
 	VoiceAsst::Resolution decided;
+
+	LLMStatus preloadStatus;
 
 	bool haveTranscript = false;
 	{
@@ -750,6 +780,8 @@ void VoiceAssistant::frame(void)
 
 			decided = resolution;
 		}
+
+		preloadStatus = llmStatus;
 	}
 
 	// TODO: use Threads::RunLoop - I can have it notify me when there is ollama text
@@ -758,7 +790,21 @@ void VoiceAssistant::frame(void)
 	// I would use a UserSignal from the RunLoop stuff
 	// Make UserSignal class, catch the data in Vrui foreground thread
 
-	if (haveTranscript && state == Thinking)
+	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
+	// Speaking done through OpenAL
+	// We have to play nice with others - application sounds, music, etc
+	// Look at voice collaboration module in the Vrui library (super ugly)
+	// WAIT on Oliver to make the audio stuff
+
+	// If not listening user not speaking, reset the userIsSpeaking flag
+	if (state != Listening && userIsSpeaking)
+	{
+		userIsSpeaking = false;
+	}
+
+	// Decide this frame's transition. Every check reads the same snapshot (state, elapsedInCurrentState),
+	// and only one branch can run, because each state has exactly one place where it can leave
+	if (state == Thinking && haveTranscript)
 	{
 		Misc::formattedConsoleNote("VoiceAssistant: heard \"%s\"", heard.c_str());
 
@@ -771,45 +817,54 @@ void VoiceAssistant::frame(void)
 		{
 			case VoiceAsst::Resolution::Answer:
 			case VoiceAsst::Resolution::Clarify:
-				applyState(Speaking); // There's text to say (TTS comes in Milestone E)
+				nextState = Speaking; // There's text to say (TTS comes in Milestone E)
 				break;
 			case VoiceAsst::Resolution::RunCommand:
 			case VoiceAsst::Resolution::Nothing:
-				applyState(Idle); // Commands run here in Milestone C
+				nextState = Idle; // Commands run here in Milestone C
 				break;
 		}
 	}
-
-	// FAKE PIPELINE FOR TESTING ONLY, until the real voice pipeline exists:
-	// timers advance Warmup -> Idle, and after a press/release Listening -> Thinking -> Speaking -> Idle
-
-	// Fake loading lasts 3 seconds for now
-	const double warmupDuration = 3;
-	if (state == Warmup && elapsed >= warmupDuration) applyState(Idle);
-
-	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
-	// Speaking done through OpenAL
-	// We have to play nice with others - application sounds, music, etc
-	// Look at voice collaboration module in the Vrui library (super ugly)
-	// WAIT on Oliver to make the audio stuff
-	const double errorDuration = 1; // Seconds before Error auto-advances to Idle
-
-	// If not listening user not speaking, reset the userIsSpeaking flag
-	if (state != Listening && userIsSpeaking)
+	else if (state == Warmup)
 	{
-		userIsSpeaking = false;
+		if (elapsedInCurrentState >= factory->warmupMinDuration)
+		{
+			if (preloadStatus == LlmSuccess)
+			{
+				nextState = Idle;
+			}
+			else if (!sttEngine.isValid() || preloadStatus == LlmError)
+			{
+				nextState = Error;
+			}
+			else if (elapsedInCurrentState >= factory->warmupTimeout)
+			{
+				Misc::formattedConsoleWarning("VoiceAssistant: warmup exceeded %g seconds, aborting", factory->warmupTimeout);
+				nextState = Error;
+			}
+		}
 	}
-
 	// Update finished speaking timer if user not speaking
-	if (state == Listening && !userIsSpeaking)
+	else if (state == Listening && !userIsSpeaking)
 	{
 		double elapsedSinceUserFinishedSpeaking = getApplicationTime() - userFinishedSpeakingTime;
-		if (elapsedSinceUserFinishedSpeaking >= factory->listeningBufferDuration) applyState(Thinking);
+		if (elapsedSinceUserFinishedSpeaking >= factory->listeningBufferDuration) nextState = Thinking;
 	}
-	else if (state == Speaking && getApplicationTime() - stateStartTime >= speakingDuration)
-		applyState(Idle);
-	else if (state == Error && elapsed >= errorDuration)
-		applyState(Idle);
+	// Placeholder for speech
+	else if (state == Speaking && elapsedInCurrentState >= speakingDuration)
+	{
+		nextState = Idle;
+	}
+	else if (state == Error && elapsedInCurrentState >= factory->errorDuration)
+	{
+		nextState = Idle;
+	}
+
+	// Apply the one transition decided above; the new state's timers start counting next frame
+	if (nextState != state)
+	{
+		applyState(nextState);
+	}
 
 	// Update the microphone level for the halo glow, if in Listening state
 	float rawLevel = micLevel;
@@ -904,7 +959,7 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	haloThickness(0.08), haloMaxAlpha(0.8), haloFalloff(2.0), haloPulseSpeed(1.0),
 	haloMinPulse(0.3), haloMaxSizeListening(1.8),
 	haloFalloffListening(0.6), haloMaxSizeFirstPulse(1.3),
-	stateTransitionDuration(0.5),
+	stateTransitionDuration(0.5), errorDuration(1.5),
 	warmupColor(GLColor<GLfloat, 4>(1.0f, 0.55f, 0.1f)), // Orange: powering up
 	listeningColor(GLColor<GLfloat, 4>(1.0f, 0.9f, 0.2f)), // Yellow: actively listening
 	thinkingColor(GLColor<GLfloat, 4>(0.3f, 0.5f, 1.0f)), // Blue: processing
@@ -914,6 +969,7 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	micGain(9.0), micLevelAttack(0.03), micLevelRelease(0.16),
 	ollamaUrl("http://127.0.0.1:11434"), ollamaModel("qwen3:4b"),
 	ollamaKeepAlive(1800.0), ollamaTimeout(15.0),
+	warmupTimeout(30.0), warmupMinDuration(1.5),
 	printStateChanges(false),
 	sttVerbose(false),
 	dryRun(false)
@@ -934,6 +990,8 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./haloFalloffListening", haloFalloffListening);
 	cfs.updateValue("./haloMaxSizeFirstPulse", haloMaxSizeFirstPulse);
 	cfs.updateValue("./stateTransitionDuration", stateTransitionDuration);
+	cfs.updateValue("./errorDuration", errorDuration);
+
 	cfs.updateValue("./warmupColor", warmupColor);
 	cfs.updateValue("./listeningColor", listeningColor);
 	cfs.updateValue("./thinkingColor", thinkingColor);
@@ -951,6 +1009,7 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	cfs.updateValue("./ollamaModel", ollamaModel);
 	cfs.updateValue("./ollamaKeepAlive", ollamaKeepAlive);
 	cfs.updateValue("./ollamaTimeout", ollamaTimeout);
+	cfs.updateValue("./warmupTimeout", warmupTimeout);
 
 	cfs.updateValue("./printStateChanges", printStateChanges);
 	cfs.updateValue("./sttVerbose", sttVerbose);
@@ -974,12 +1033,15 @@ VoiceAssistantFactory::VoiceAssistantFactory(VisletManager& visletManager) :
 	haloFalloffListening = Math::max(haloFalloffListening, Scalar(0.05));
 	haloMaxSizeFirstPulse = Math::clamp(haloMaxSizeFirstPulse, Scalar(1), Scalar(3));
 	stateTransitionDuration = Math::max(stateTransitionDuration, 0.0);
+	errorDuration = Math::max(errorDuration, 0.0);
 	listeningBufferDuration = Math::max(listeningBufferDuration, 0.01);
 	micGain = Math::max(micGain, Scalar(0));
 	micLevelAttack = Math::max(micLevelAttack, 0.001);
 	micLevelRelease = Math::max(micLevelRelease, 0.001);
 	ollamaKeepAlive = Math::max(ollamaKeepAlive, -1.0);
 	ollamaTimeout = Math::clamp(ollamaTimeout, 1.0, 300.0);
+	warmupTimeout = Math::clamp(warmupTimeout, 1.0, 300.0);
+	warmupMinDuration = Math::clamp(warmupMinDuration, 0.0, 300.0);
 
 	// Check that Ollama strings are plausible, warn when falling back so mistake isn't hidden
 	if (ollamaUrl.compare(0, 7, "http://") != 0 && ollamaUrl.compare(0, 8, "https://") != 0)

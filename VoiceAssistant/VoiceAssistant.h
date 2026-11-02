@@ -163,7 +163,12 @@ class VoiceAssistant : public Vislet
 		Speaking,
 		Error
 	};
-
+	enum LLMStatus
+	{
+		LlmPending,
+		LlmSuccess,
+		LlmError
+	};
 	// Classes for activated voice assistant tool
 	class VoiceAssistantToolFactory : public ToolFactory
 	{
@@ -243,6 +248,7 @@ class VoiceAssistant : public Vislet
 	std::string transcript; // Last finished utterance's text
 	VoiceAsst::CommandCatalog pendingCatalog; // Command list snapshot taken on press; sttThread copies it
 	VoiceAsst::Resolution resolution; // Ollama's decision for the last finished utterance
+	LLMStatus llmStatus; // Result of sttThread's Ollama preload; frame() reads it to end Warmup
 
 	/* Private methods: */
 	private:
@@ -294,6 +300,7 @@ class VoiceAssistantFactory : public VisletFactory
 
 	// State colors and transitions
 	double stateTransitionDuration; // color/fade time between states, in seconds; 0 = instant (>=0)
+	double errorDuration; // How long to stay in the error color before fading back to Idle, in seconds (>0)
 	GLColor<GLfloat, 4> warmupColor; // Glow color while warming up (alpha is forced to 1)
 	GLColor<GLfloat, 4> listeningColor; // Glow color while listening (alpha is forced to 1)
 	GLColor<GLfloat, 4> thinkingColor; // Glow color while thinking (alpha is forced to 1)
@@ -314,6 +321,8 @@ class VoiceAssistantFactory : public VisletFactory
 	std::string ollamaModel; // Which Ollama model are we running (e.g. "qwen3:4b", alternative "phi4-mini")
 	double ollamaKeepAlive; // Seconds; any negative value means "keep loaded forever", normalized to -1
 	double ollamaTimeout; // Seconds; Bigger model or slower machine needs more time
+	double warmupTimeout; // Seconds; how long to wait for Ollama to load the model before giving up and going to Error state
+	double warmupMinDuration; // Seconds; how long to stay in Warmup state even if Ollama loads faster, so the user sees the halo change
 
 	// Debugging
 	bool printStateChanges;

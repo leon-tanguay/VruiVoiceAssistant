@@ -59,7 +59,7 @@ class OllamaClient
 	public:
 	OllamaClient(const std::string& sBaseUrl, const std::string& sModel, double sKeepAlive, double sTimeout);
 
-	bool preload(void); // Loads the model into memory now, so the first real request doesn't pay for it
+	long preload(void); // Loads the model into memory now, so the first real request doesn't pay for it; returns the HTTP status (200 = loaded, 404 = model not pulled), or -1 if Ollama couldn't be reached
 	bool chat(const std::string& system, const std::string& user, IO::JsonPointer schema, std::string& reply); // reply = the model's JSON text; false if Ollama failed
 };
 }
