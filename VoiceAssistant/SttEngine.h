@@ -46,7 +46,7 @@ class SttEngine
 	{
 		VoskRecognizer* recognizer;
 
-		RecognizerHandle(VoskModel* model, float sampleRate); // Null recognizer on failure (does not throw)
+		RecognizerHandle(VoskModel* model, float sampleRate); // Null recognizer on failure (does not throw); SttEngine's constructor checks for this and throws
 		~RecognizerHandle(void); // Calls vosk_recognizer_free if non-null
 
 		private:
@@ -54,15 +54,16 @@ class SttEngine
 		RecognizerHandle& operator=(const RecognizerHandle& source); // Prohibit assignment
 	};
 
-	ModelHandle model; // The loaded Vosk model, shared by every transcription
-	Misc::SelfDestructPointer<RecognizerHandle> recognizer; // Recognizer for the current utterance; invalid between utterances
+	unsigned int channels; // Microphone channel count, fixed at construction, for mono mixdown in feed()
 
-	unsigned int channels; // Channel count of the current utterance, for mono mixdown in feed()
+	ModelHandle model; // The loaded Vosk model, shared by every transcription
+
+	RecognizerHandle recognizer; // One recognizer for the engine's lifetime, reset by begin() for each utterance; never null once constructed
 
 	public:
-	SttEngine(const char* modelPath, bool verbose); // Loads the Vosk model from the given folder; throws std::runtime_error on failure
-	bool begin(unsigned int frameRate, unsigned int sChannels); // Starts a new utterance; false if the recognizer can't be created
+	SttEngine(const char* modelPath, bool verbose, unsigned int frameRate, unsigned int sChannels); // Loads the Vosk model from the given folder and creates a recognizer for the microphone's frame rate and channels; throws std::runtime_error if either fails
 	void feed(const Misc::SInt16* samples, size_t numSamples); // Adds interleaved samples to the current utterance
+	void begin(); // Starts a new utterance, resetting the recognizer
 	std::string finish(void); // Ends the utterance and returns the text, or "" if nothing was recognized
 };
 

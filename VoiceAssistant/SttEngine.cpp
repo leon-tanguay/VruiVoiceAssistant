@@ -1,7 +1,6 @@
 /***********************************************************************
 SttEngine - See SttEngine.h.
 ***********************************************************************/
-
 #include "SttEngine.h"
 
 #include <IO/File.h>
@@ -42,35 +41,23 @@ SttEngine::RecognizerHandle::~RecognizerHandle(void)
 		vosk_recognizer_free(recognizer);
 }
 
-SttEngine::SttEngine(const char* modelPath, bool verbose) :
-	model(modelPath, verbose), channels(0)
+// Initializes the SttEngine with a Vosk model and prepares for recognition (throws with bad model path or recognizer)
+SttEngine::SttEngine(const char* modelPath, bool verbose, unsigned int frameRate, unsigned int sChannels) :
+	channels(sChannels), model(modelPath, verbose), recognizer(model.model, float(frameRate))
 {
+	if (recognizer.recognizer == nullptr)
+		throw std::runtime_error("SttEngine: failed to create Vosk recognizer at " + std::to_string(frameRate) + " Hz");
 }
 
-bool SttEngine::begin(unsigned int frameRate, unsigned int sChannels)
+// Starts a new utterance, resetting the recognizer
+void SttEngine::begin()
 {
-	// Reject bad input
-	if (frameRate == 0 || sChannels == 0)
-		return false;
-
-	recognizer = new RecognizerHandle(model.model, float(frameRate));
-
-	// Vosk couldn't create a recognizer
-	if (recognizer->recognizer == nullptr)
-	{
-		recognizer = nullptr; // Don't leave a handle that feed() would trust
-		return false;
-	}
-
-	channels = sChannels;
-	return true;
+	vosk_recognizer_reset(recognizer.recognizer);
 }
 
+// Feed samples to the recognizer, converting to mono if necessary
 void SttEngine::feed(const Misc::SInt16* samples, size_t numSamples)
 {
-	// No utterance in progress
-	if (!recognizer.isValid()) return;
-
 	const Misc::SInt16* audio = samples;
 	size_t audioSize = numSamples;
 	std::vector<Misc::SInt16> mono;
@@ -89,14 +76,12 @@ void SttEngine::feed(const Misc::SInt16* samples, size_t numSamples)
 		audioSize = numFrames;
 	}
 
-	vosk_recognizer_accept_waveform_s(recognizer->recognizer, audio, int(audioSize));
+	vosk_recognizer_accept_waveform_s(recognizer.recognizer, audio, int(audioSize));
 }
 
 std::string SttEngine::finish(void)
 {
-	if (!recognizer.isValid()) return std::string();
-
-	const char* json = vosk_recognizer_final_result(recognizer->recognizer);
+	const char* json = vosk_recognizer_final_result(recognizer.recognizer);
 	std::string text;
 	if (json != nullptr)
 	{
@@ -118,7 +103,6 @@ std::string SttEngine::finish(void)
 		}
 	}
 
-	recognizer = nullptr; // Frees the recognizer; the next begin() makes a fresh one
 	return text;
 }
 

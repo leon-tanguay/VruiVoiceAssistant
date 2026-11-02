@@ -223,7 +223,6 @@ class VoiceAssistant : public Vislet
 	float smoothedMicLevel;
 
 	// Microphone
-	SoundContext* recordingSoundContext;
 	Misc::Autopointer<SoundContext::RecordingCallback> micCallback;
 	unsigned int recordingFrameRate;
 	unsigned int recordingChannels;
@@ -232,6 +231,9 @@ class VoiceAssistant : public Vislet
 	Misc::SelfDestructPointer<VoiceAsst::SttEngine> sttEngine; // Speech-to-text engine, created in enable()
 	Threads::Thread sttThread; // Feeds the microphone to Vosk while the user talks
 	Threads::MutexCond recordingCond; // Guards everything below and wakes sttThread
+
+	// Typical data structure used for quickly shoving data between threads is a ring buffer
+	// Vrui threading lib has lots of ring buffers for this purpose
 	std::vector<Misc::SInt16> recordedSamples; // Mic samples not yet fed to Vosk
 	bool sttRunning; // False tells sttThread to exit
 	bool sttStartRequested; // Main thread wants a new utterance started

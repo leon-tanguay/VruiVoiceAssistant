@@ -156,6 +156,8 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	const VRScreen* screen = displayState.screen;
 	const Scalar screenWidth = screen->getWidth();
 	const Scalar screenHeight = screen->getHeight();
+
+	// Should not go to VRWindow here
 	const VRWindow* window = displayState.window;
 	const Scalar* panRect = window->getPanRect();
 
@@ -382,6 +384,8 @@ GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
 
 void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
 {
+	// Put it into vosk, if we get a result from vosk, then we can pump text info into ollama
+	// See if we can simplify threading system
 	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
 
 	if (cbData.numFrames == 0)
@@ -398,6 +402,7 @@ void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData
 		recordingCond.signal(); // Wake sttThread: there is audio to feed
 	}
 
+	// Will eventually be implemented in Vrui lib at some pt
 	double sumSquares = 0.0;
 	for (size_t i = 0; i < numSamples; ++i)
 	{
@@ -413,6 +418,8 @@ void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData
 
 void* VoiceAssistant::sttThreadMethod(void)
 {
+	// if we only have to initialize the ollama client we can use the Threads::WorkerPool from vrui
+
 	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
 
 	// OllamaClient isn't thread-safe, so it lives and is used only on this thread
@@ -461,7 +468,7 @@ void* VoiceAssistant::sttThreadMethod(void)
 
 		// Slow work, outside the lock, in order: start, feed, finish
 		if (start)
-			sttEngine->begin(recordingFrameRate, recordingChannels);
+			sttEngine->begin();
 		if (!chunk.empty())
 		{
 			sttEngine->feed(chunk.data(), chunk.size());
@@ -581,7 +588,6 @@ VoiceAssistant::VoiceAssistant(int numArguments, const char* const arguments[]) 
 	Vislet(), state(Idle), stateStartTime(0.0), userIsSpeaking(false), userFinishedSpeakingTime(0.0),
 	haloNode(new HaloNode(this)), transitionStartColor(GLColor<GLfloat, 4>(0.0f, 0.0f, 0.0f, 0.0f)),
 	micLevel(0.0f), smoothedMicLevel(0.0f),
-	recordingSoundContext(nullptr), recordingFrameRate(0), recordingChannels(0),
 	sttRunning(false), sttStartRequested(false), sttFinishRequested(false), transcriptReady(false)
 {
 	if (owner == nullptr)
@@ -626,56 +632,70 @@ VisletFactory* VoiceAssistant::getFactory(void) const
 void VoiceAssistant::enable(bool startup)
 {
 	Vislet::enable(startup);
-	Misc::consoleNote("VoiceAssistant: starting");
 
 	if (owner != this) return;
 
-	if (!sttEngine.isValid())
+	if (startup)
 	{
+		Misc::consoleNote("VoiceAssistant: starting...");
 		try
 		{
-			sttEngine = new VoiceAsst::SttEngine(factory->voskModelPath.c_str(), factory->sttVerbose);
-			Misc::formattedConsoleNote("VoiceAssistant: loaded speech model %s", factory->voskModelPath.c_str());
+			auto recordingSoundContext = getRecordingSoundContext();
+			if (!recordingSoundContext)
+			{
+				Misc::consoleWarning("VoiceAssistant: no recording sound context available, microphone disabled");
+				applyState(Error);
+
+				auto format = recordingSoundContext->getRecordingFormat();
+				if (format.bytesPerSample != sizeof(Misc::SInt16))
+				{
+					Misc::formattedConsoleWarning("VoiceAssistant: unsupported microphone format (%d bytes/sample, need 16-bit)",
+						int(format.bytesPerSample));
+					applyState(Error);
+				}
+				else
+				{
+					recordingFrameRate = format.framesPerSecond;
+					recordingChannels = format.samplesPerFrame;
+					sttEngine = new VoiceAsst::SttEngine(factory->voskModelPath.c_str(), factory->sttVerbose, recordingFrameRate, recordingChannels);
+					Misc::formattedConsoleNote("VoiceAssistant: loaded speech model %s", factory->voskModelPath.c_str());
+				}
+			}
 		}
 		catch (const std::runtime_error& err)
 		{
 			Misc::formattedConsoleError("VoiceAssistant: speech recognition unavailable: %s", err.what());
 		}
 
-		// Start the speech-to-text thread, if there is an engine for it to drive
 		if (sttEngine.isValid())
 		{
+			// Start the speech-to-text thread, if there is an engine for it to drive
 			{
 				Threads::MutexCond::Lock lock(recordingCond);
 				sttRunning = true;
 			}
+
 			sttThread.start(this, &VoiceAssistant::sttThreadMethod);
 		}
-	}
 
-	// Add tool
-	Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(), this),
-		Vrui::ToolManager::defaultToolFactoryDestructor);
+		// Add tool
+		Vrui::getToolManager()->addClass(new VoiceAssistantToolFactory(*Vrui::getToolManager(), this),
+			Vrui::ToolManager::defaultToolFactoryDestructor);
 
-	// Start on warmup
-	if (startup)
-	{
 		applyState(Warmup);
+		// Add node to scene graph
+		getSceneGraphManager()->addPhysicalNode(*haloNode);
+
+		Misc::consoleNote("VoiceAssistant: started");
 	}
 	else
 	{
 		applyState(Idle);
 	}
-
-	// Add node to scene graph
-	getSceneGraphManager()->addPhysicalNode(*haloNode);
-
-	Misc::consoleNote("VoiceAssistant: started");
 }
 
 void VoiceAssistant::disable(bool shutdown)
 {
-	Misc::consoleNote("VoiceAssistant: stopping");
 	Vislet::disable(shutdown);
 
 	if (owner != this) return;
@@ -684,11 +704,14 @@ void VoiceAssistant::disable(bool shutdown)
 	userIsSpeaking = false;
 	applyState(Idle);
 
-	stopSttThread();
-
-	Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
-
-	Misc::consoleNote("VoiceAssistant: stopped");
+	// Resources that only are created once should only be destroyed once
+	if (shutdown)
+	{
+		Misc::consoleNote("VoiceAssistant: stopping...");
+		stopSttThread();
+		Vrui::getToolManager()->releaseClass(VoiceAssistantTool::factory);
+		Misc::consoleNote("VoiceAssistant: stopped");
+	}
 }
 
 void VoiceAssistant::frame(void)
@@ -712,6 +735,13 @@ void VoiceAssistant::frame(void)
 			decided = resolution;
 		}
 	}
+
+	// TODO: use Threads::RunLoop - I can have it notify me when there is ollama text
+	// Ask Vrui to be notified when there is ollama text, catch it in a thread and deal with it there
+	// instead of frame
+	// I would use a UserSignal from the RunLoop stuff
+	// Make UserSignal class, catch the data in Vrui foreground thread
+
 	if (haveTranscript && state == Thinking)
 	{
 		Misc::formattedConsoleNote("VoiceAssistant: heard \"%s\"", heard.c_str());
@@ -742,7 +772,10 @@ void VoiceAssistant::frame(void)
 	if (state == Warmup && elapsed >= warmupDuration) applyState(Idle);
 
 	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
-
+	// Speaking done through OpenAL
+	// We have to play nice with others - application sounds, music, etc
+	// Look at voice collaboration module in the Vrui library (super ugly)
+	// WAIT on Oliver to make the audio stuff
 	const double errorDuration = 1; // Seconds before Error auto-advances to Idle
 
 	// If not listening user not speaking, reset the userIsSpeaking flag
@@ -754,26 +787,22 @@ void VoiceAssistant::frame(void)
 	// Update finished speaking timer if user not speaking
 	if (state == Listening && !userIsSpeaking)
 	{
-		double elaspedSinceUserFinishedSpeaking = getApplicationTime() - userFinishedSpeakingTime;
-		if (elaspedSinceUserFinishedSpeaking >= factory->listeningBufferDuration) applyState(Thinking);
+		double elapsedSinceUserFinishedSpeaking = getApplicationTime() - userFinishedSpeakingTime;
+		if (elapsedSinceUserFinishedSpeaking >= factory->listeningBufferDuration) applyState(Thinking);
 	}
 	else if (state == Speaking && getApplicationTime() - stateStartTime >= speakingDuration)
 		applyState(Idle);
 	else if (state == Error && elapsed >= errorDuration)
 		applyState(Idle);
+
 	// Update the microphone level for the halo glow, if in Listening state
-	const float rawLevel = micLevel;
+	float rawLevel = micLevel;
 
-	float target = 0.0f;
+	float target = (state == Listening) ? rawLevel : 0.0f;
 
-	if (state == Listening)
-	{
-		target = rawLevel;
-	}
+	float timeConstant = (target > smoothedMicLevel) ? factory->micLevelAttack : factory->micLevelRelease;
 
-	const float timeConstant = (target > smoothedMicLevel) ? factory->micLevelAttack : factory->micLevelRelease;
-
-	const float amount = float(1.0f - Math::exp(-getFrameTime() / timeConstant));
+	float amount = float(1.0f - Math::exp(-getFrameTime() / timeConstant));
 	smoothedMicLevel += (target - smoothedMicLevel) * amount;
 
 	// Update drawing (scheduled to next visual frame, can be configured)
@@ -787,29 +816,11 @@ void VoiceAssistant::applyState(AssistantState newState)
 {
 	if (state != newState)
 	{
-		// Leaving listening, disable mic
-		if (state == Listening)
-		{
-			micLevel = 0.0f;
-			smoothedMicLevel = 0.0f;
-			if (recordingSoundContext != nullptr)
-			{
-				recordingSoundContext->removeRecordingCallback(*micCallback);
-				recordingSoundContext = nullptr;
-
-				// Tell sttThread the utterance is over: it feeds the last samples, then finishes
-				{
-					Threads::MutexCond::Lock lock(recordingCond);
-					sttFinishRequested = true;
-					recordingCond.signal();
-				}
-			}
-		}
+		Vrui::SoundContext* recordingSoundContext = getRecordingSoundContext();
 
 		// Entering listening, enable mic
-		else if (newState == Listening)
+		if (newState == Listening)
 		{
-			recordingSoundContext = getRecordingSoundContext();
 			if (recordingSoundContext == nullptr)
 			{
 				// No microphone available
@@ -818,32 +829,35 @@ void VoiceAssistant::applyState(AssistantState newState)
 			}
 			else
 			{
-				const Sound::SoundDataFormat& format = recordingSoundContext->getRecordingFormat();
-				if (format.bytesPerSample != sizeof(Misc::SInt16))
+				// Tell sttThread a new utterance is starting, with a clean buffer
 				{
-					Misc::formattedConsoleWarning("VoiceAssistant: unsupported microphone format (%d bytes/sample, need 16-bit)",
-						int(format.bytesPerSample));
-					newState = Error;
+					Threads::MutexCond::Lock lock(recordingCond);
+					recordedSamples.clear();
+					pendingCatalog.fillCommands(getCommandDispatcher()); // Main thread only: the dispatcher isn't thread-safe
+					sttStartRequested = true;
+					sttFinishRequested = false;
+					transcriptReady = false;
+					recordingCond.signal();
 				}
-				else
-				{
-					recordingFrameRate = format.framesPerSecond;
-					recordingChannels = format.samplesPerFrame;
 
-					// Tell sttThread a new utterance is starting, with a clean buffer
-					{
-						Threads::MutexCond::Lock lock(recordingCond);
-						recordedSamples.clear();
-						pendingCatalog.fillCommands(getCommandDispatcher()); // Main thread only: the dispatcher isn't thread-safe
-						sttStartRequested = true;
-						sttFinishRequested = false;
-						transcriptReady = false;
-						recordingCond.signal();
-					}
+				micCallback = Threads::createFunctionCall(this, &VoiceAssistant::micCallbackMethod);
+				recordingSoundContext->addRecordingCallback(*micCallback);
+			}
+		}
 
-					micCallback = Threads::createFunctionCall(this, &VoiceAssistant::micCallbackMethod);
-					recordingSoundContext->addRecordingCallback(*micCallback);
-				}
+		// Leaving listening, disable mic
+		if (state == Listening)
+		{
+			micLevel = 0.0f;
+			smoothedMicLevel = 0.0f;
+
+			recordingSoundContext->removeRecordingCallback(*micCallback);
+
+			// Tell sttThread the utterance is over: it feeds the last samples, then finishes
+			{
+				Threads::MutexCond::Lock lock(recordingCond);
+				sttFinishRequested = true;
+				recordingCond.signal();
 			}
 		}
 
