@@ -41,7 +41,6 @@ VoiceAssistant - See VoiceAssistant.h.
 #include <Vrui/VisletManager.h>
 #include <Vrui/VRScreen.h>
 #include <Vrui/Vrui.h>
-#include <Vrui/VRWindow.h>
 
 #include "OllamaClient.h"
 
@@ -164,16 +163,35 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	const Scalar screenWidth = screen->getWidth();
 	const Scalar screenHeight = screen->getHeight();
 
-	// Should not go to VRWindow here
-	const VRWindow* window = displayState.window;
-	const Scalar* panRect = window->getPanRect();
+	// Find the part of the screen this view actually shows, from the projection alone (no window needed):
+	// screen coordinates -> physical -> eye -> clip space, then run each clip-space corner backwards
+	const PTransform screenToClip = displayState.projection * PTransform(displayState.modelviewPhysical) * PTransform(screen->getScreenTransformation());
 
-	const Scalar visibleLeft = panRect[0] * screenWidth;
-	const Scalar visibleRight = panRect[1] * screenWidth;
-	const Scalar visibleBottom = panRect[2] * screenHeight;
-	const Scalar visibleTop = panRect[3] * screenHeight;
+	Scalar left = Math::Constants<Scalar>::max;
+	Scalar right = -Math::Constants<Scalar>::max;
+	Scalar bottom = Math::Constants<Scalar>::max;
+	Scalar top = -Math::Constants<Scalar>::max;
+	for (int corner = 0; corner < 4; ++corner)
+	{
+		const Scalar x = (corner & 1) ? 1 : -1;
+		const Scalar y = (corner & 2) ? 1 : -1;
 
-	Scalar haloWidth = Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom) * voiceAssistant->factory->haloThickness;
+		// The corner's line of sight, as its points on the near (z=-1) and far (z=1) planes, in screen coordinates
+		const Point nearPoint = screenToClip.inverseTransform(Point(x, y, -1));
+		const Point farPoint = screenToClip.inverseTransform(Point(x, y, 1));
+
+		// Where that line of sight crosses the screen plane (z = 0 in screen coordinates)
+		const Scalar t = nearPoint[2] / (nearPoint[2] - farPoint[2]);
+		const Scalar hitX = nearPoint[0] + (farPoint[0] - nearPoint[0]) * t;
+		const Scalar hitY = nearPoint[1] + (farPoint[1] - nearPoint[1]) * t;
+
+		left = Math::min(left, hitX);
+		right = Math::max(right, hitX);
+		bottom = Math::min(bottom, hitY);
+		top = Math::max(top, hitY);
+	}
+
+	Scalar haloWidth = Math::min(right - left, top - bottom) * voiceAssistant->factory->haloThickness;
 
 	// Render state setup
 	renderState.disableMaterials();
@@ -187,10 +205,10 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 	glMultMatrix(screenTransform);
 
 	// Create 4 corner objects
-	const ScreenCorner bottomLeft(Point2(visibleLeft, visibleBottom), Vector2(1, 1));
-	const ScreenCorner bottomRight(Point2(visibleRight, visibleBottom), Vector2(-1, 1));
-	const ScreenCorner topRight(Point2(visibleRight, visibleTop), Vector2(-1, -1));
-	const ScreenCorner topLeft(Point2(visibleLeft, visibleTop), Vector2(1, -1));
+	const ScreenCorner bottomLeft(Point2(left, bottom), Vector2(1, 1));
+	const ScreenCorner bottomRight(Point2(right, bottom), Vector2(-1, 1));
+	const ScreenCorner topRight(Point2(right, top), Vector2(-1, -1));
+	const ScreenCorner topLeft(Point2(left, top), Vector2(1, -1));
 
 	// Glow strength 0..1 (before max alpha and state fades) and size multiplier (1 = configured thickness)
 	Scalar strength;
@@ -222,8 +240,8 @@ void VoiceAssistant::HaloNode::glRenderAction(SceneGraph::GLRenderState& renderS
 		}
 	}
 
-	// Grow with the voice, but never past half the visible area (opposite edges would overlap)
-	const Scalar maxWidth = 0.5 * Math::min(visibleRight - visibleLeft, visibleTop - visibleBottom);
+	// Grow with the voice, but never past half the screen (opposite edges would overlap)
+	const Scalar maxWidth = 0.5 * Math::min(right - left, top - bottom);
 	haloWidth = Math::min(haloWidth * sizeScale, maxWidth);
 
 	// State fades (color[3]) are applied last, so fading in and out of Idle still reaches 0
