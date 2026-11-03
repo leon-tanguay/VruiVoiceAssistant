@@ -238,8 +238,8 @@ class VoiceAssistant : public Vislet
 	Threads::Thread sttThread; // Feeds the microphone to Vosk while the user talks
 	Threads::MutexCond recordingCond; // Guards everything below and wakes sttThread
 
-	// Typical data structure used for quickly shoving data between threads is a ring buffer
-	// Vrui threading lib has lots of ring buffers for this purpose
+	// Samples pass through a mutex-guarded vector; the lock is held only for an insert or swap, so the audio callback barely waits.
+	// If audio glitches ever show up with other mic users, Threads::LockFreeRingBuffer is the lock-free drop-in replacement
 	std::vector<Misc::SInt16> recordedSamples; // Mic samples not yet fed to Vosk
 	bool sttRunning; // False tells sttThread to exit
 	bool sttStartRequested; // Main thread wants a new utterance started

@@ -416,8 +416,8 @@ GLColor<GLfloat, 4> VoiceAssistant::getHaloColor(double time) const
 
 void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData& cbData)
 {
-	// Put it into vosk, if we get a result from vosk, then we can pump text info into ollama
-	// See if we can simplify threading system
+	// Runs on Vrui's sound thread: hand the samples to sttThread and update the mic level.
+	// Keep it short; every recording callback runs one after another on that thread
 	const Misc::SInt16* samples = static_cast<const Misc::SInt16*>(cbData.frames);
 
 	if (cbData.numFrames == 0)
@@ -450,7 +450,7 @@ void VoiceAssistant::micCallbackMethod(const SoundContext::RecordingCallbackData
 
 void* VoiceAssistant::sttThreadMethod(void)
 {
-	// if we only have to initialize the ollama client we can use the Threads::WorkerPool from vrui
+	// Does all the slow work: feeds Vosk, preloads Ollama and asks it about each utterance; OllamaClient is only ever used from this thread
 
 	std::vector<Misc::SInt16> chunk; // Samples taken from recordedSamples, fed outside the lock
 
@@ -799,11 +799,8 @@ void VoiceAssistant::frame(void)
 		preloadStatus = llmStatus;
 	}
 
-	// TODO: use Threads::RunLoop - I can have it notify me when there is ollama text
-	// Ask Vrui to be notified when there is ollama text, catch it in a thread and deal with it there
-	// instead of frame
-	// I would use a UserSignal from the RunLoop stuff
-	// Make UserSignal class, catch the data in Vrui foreground thread
+	// Results are polled here, at the cost of one short lock per frame. If more background work arrives (e.g. TTS),
+	// Vrui::submitJob (WorkerPool job + main-thread completion callback through a UserSignal) could replace this polling
 
 	const double speakingDuration = 3; // Seconds before Speaking auto-advances to Idle
 	// Speaking done through OpenAL
